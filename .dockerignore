@@ -1,0 +1,33 @@
+# Secrets — must never enter the build context or the image.
+.env
+.env.*
+!.env.example
+
+# VCS
+.git
+.gitignore
+.github
+
+# Editors / tooling
+.claude
+.idea
+.vscode
+*.swp
+
+# Build output and local artifacts
+api
+api.exe
+*.exe
+*.test
+*.out
+coverage.*
+uploads/
+.verify-uploads/
+tmp/
+
+# Docs are not needed to compile the binary.
+docs/
+README.md
+Makefile
+docker-compose.yml
+Dockerfile

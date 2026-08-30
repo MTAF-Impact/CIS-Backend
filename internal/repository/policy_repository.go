@@ -1,0 +1,235 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+
+	"github.com/cis/cis-backend/internal/models"
+)
+
+// PolicyRepository manages cis_policies, the backend-owned F2 Public Policy
+// Bank, and reads the AI service's `policies` / `claim_policies` tables to
+// resolve correlations.
+//
+// The backend never inserts into the AI's `policies` table. A cis_policies row
+// carries a nullable ai_policy_id soft reference that the AI service fills in
+// once matchmaking completes (US42); every correlation query joins through it.
+type PolicyRepository struct {
+	db *gorm.DB
+}
+
+// NewPolicyRepository constructs a PolicyRepository.
+func NewPolicyRepository(db *gorm.DB) *PolicyRepository {
+	return &PolicyRepository{db: db}
+}
+
+// PolicyRow is a policy joined with its claim-activity metadata.
+type PolicyRow struct {
+	models.CISPolicy `gorm:"embedded"`
+	// LastClaimActivityAt is the newest created_at across every claim linked to
+	// this policy, and is what US35 sorts the list by.
+	LastClaimActivityAt *time.Time `gorm:"column:last_claim_activity_at"`
+	LinkedClaimCount    int64      `gorm:"column:linked_claim_count"`
+}
+
+// PolicyFilter describes the F2 list query (US34, US35, US38).
+type PolicyFilter struct {
+	Years  []int
+	Search string
+	Status string
+	Limit  int
+	Offset int
+}
+
+// claimActivitySubquery aggregates, per AI policy id, the newest linked-claim
+// timestamp and the number of linked claims.
+//
+// A claim links to a policy either through claim_policies (many-to-many,
+// Existing claims) or through claims.policy_id (one-to-many, Synthetic claims),
+// so both paths are unioned.
+const claimActivitySubquery = `
+	SELECT policy_id, MAX(created_at) AS last_activity, COUNT(*) AS linked_count
+	FROM (
+		SELECT cp.policy_id AS policy_id, c.created_at AS created_at
+		FROM claim_policies cp
+		INNER JOIN claims c ON c.id = cp.claim_id
+		UNION ALL
+		SELECT c.policy_id AS policy_id, c.created_at AS created_at
+		FROM claims c
+		WHERE c.policy_id IS NOT NULL
+	) linked
+	GROUP BY policy_id
+`
+
+func (r *PolicyRepository) baseQuery(ctx context.Context, f PolicyFilter) *gorm.DB {
+	q := r.db.WithContext(ctx).
+		Table("cis_policies AS p").
+		Joins("LEFT JOIN (" + claimActivitySubquery + ") AS act ON act.policy_id = p.ai_policy_id")
+
+	if len(f.Years) > 0 {
+		q = q.Where("EXTRACT(YEAR FROM p.rolled_out_date) IN ?", f.Years)
+	}
+	if s := strings.TrimSpace(f.Search); s != "" {
+		q = q.Where("p.name ILIKE ?", "%"+escapeLike(s)+"%")
+	}
+	if f.Status != "" {
+		q = q.Where("p.status = ?", f.Status)
+	}
+	return q
+}
+
+// List returns a page of policies ordered per US35: by the newest linked-claim
+// date, with policies that have no linked claims falling back to their own
+// creation date and sorting after all policies that do have activity.
+func (r *PolicyRepository) List(ctx context.Context, f PolicyFilter) ([]PolicyRow, int64, error) {
+	var total int64
+	if err := r.baseQuery(ctx, f).Select("COUNT(p.id)").Scan(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []PolicyRow
+	err := r.baseQuery(ctx, f).
+		Select("p.*, act.last_activity AS last_claim_activity_at, COALESCE(act.linked_count, 0) AS linked_claim_count").
+		// NULLS LAST puts every policy without claim activity after those with
+		// it; the secondary key then orders that group by its own created_at.
+		Order("act.last_activity DESC NULLS LAST, p.created_at DESC, p.id DESC").
+		Limit(f.Limit).
+		Offset(f.Offset).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+// FindByID loads one policy with its activity metadata.
+func (r *PolicyRepository) FindByID(ctx context.Context, id uuid.UUID) (*PolicyRow, error) {
+	var row PolicyRow
+	err := r.db.WithContext(ctx).
+		Table("cis_policies AS p").
+		Joins("LEFT JOIN ("+claimActivitySubquery+") AS act ON act.policy_id = p.ai_policy_id").
+		Select("p.*, act.last_activity AS last_claim_activity_at, COALESCE(act.linked_count, 0) AS linked_claim_count").
+		Where("p.id = ?", id).
+		Limit(1).
+		Scan(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	if row.ID == uuid.Nil {
+		return nil, ErrNotFound
+	}
+	return &row, nil
+}
+
+// Create inserts a new policy record.
+func (r *PolicyRepository) Create(ctx context.Context, policy *models.CISPolicy) error {
+	return r.db.WithContext(ctx).Create(policy).Error
+}
+
+// Update applies a partial update to a policy.
+func (r *PolicyRepository) Update(ctx context.Context, id uuid.UUID, updates map[string]any) error {
+	updates["updated_at"] = time.Now().UTC()
+	return r.db.WithContext(ctx).
+		Model(&models.CISPolicy{}).
+		Where("id = ?", id).
+		Updates(updates).Error
+}
+
+// Delete removes a policy record. The stored document is deleted separately by
+// the service so a storage failure cannot orphan the row.
+func (r *PolicyRepository) Delete(ctx context.Context, id uuid.UUID) (int64, error) {
+	res := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.CISPolicy{})
+	return res.RowsAffected, res.Error
+}
+
+// ListYears returns the distinct rolled-out years present in the bank, for the
+// US34 year filter chips.
+func (r *PolicyRepository) ListYears(ctx context.Context) ([]int, error) {
+	var years []int
+	err := r.db.WithContext(ctx).
+		Table("cis_policies").
+		Distinct().
+		Order("year DESC").
+		Pluck("EXTRACT(YEAR FROM rolled_out_date)::int AS year", &years).Error
+	return years, err
+}
+
+// FindDueForRollout returns policies whose rolled-out date has arrived but
+// whose status still says otherwise (US41).
+func (r *PolicyRepository) FindDueForRollout(ctx context.Context, asOf time.Time) ([]models.CISPolicy, error) {
+	var policies []models.CISPolicy
+	err := r.db.WithContext(ctx).
+		Where("status = ?", models.PolicyStatusNotRolledOut).
+		Where("rolled_out_date <= ?", asOf.Format("2006-01-02")).
+		Find(&policies).Error
+	return policies, err
+}
+
+// MarkRolledOut flips the given policies to Rolled Out.
+func (r *PolicyRepository) MarkRolledOut(ctx context.Context, ids []uuid.UUID) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).
+		Model(&models.CISPolicy{}).
+		Where("id IN ?", ids).
+		Updates(map[string]any{
+			"status":     models.PolicyStatusRolledOut,
+			"updated_at": time.Now().UTC(),
+		})
+	return res.RowsAffected, res.Error
+}
+
+// FindPendingMatchmaking returns policies whose AI matchmaking has not yet
+// completed, used to retry stuck jobs.
+func (r *PolicyRepository) FindPendingMatchmaking(ctx context.Context, maxAttempts int, limit int) ([]models.CISPolicy, error) {
+	var policies []models.CISPolicy
+	err := r.db.WithContext(ctx).
+		Where("processing_status IN ?", []string{models.ProcessingPending, models.ProcessingFailed}).
+		Where("processing_attempts < ?", maxAttempts).
+		Order("created_at ASC").
+		Limit(limit).
+		Find(&policies).Error
+	return policies, err
+}
+
+// FindAIPoliciesByIDs loads AI-owned policy records by id, used to describe
+// correlations for policies this backend did not create.
+func (r *PolicyRepository) FindAIPoliciesByIDs(ctx context.Context, ids []uuid.UUID) ([]models.AIPolicy, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var policies []models.AIPolicy
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&policies).Error
+	return policies, err
+}
+
+// FindByAIPolicyIDs loads the cis_policies rows that shadow the given AI policy
+// ids, so a claim's correlated policies can be presented with their F2 metadata
+// (rollout status, document availability) when we have it.
+func (r *PolicyRepository) FindByAIPolicyIDs(ctx context.Context, ids []uuid.UUID) ([]models.CISPolicy, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var policies []models.CISPolicy
+	err := r.db.WithContext(ctx).Where("ai_policy_id IN ?", ids).Find(&policies).Error
+	return policies, err
+}
+
+// FindByAIPolicyID loads the single cis_policies row shadowing an AI policy id.
+func (r *PolicyRepository) FindByAIPolicyID(ctx context.Context, id uuid.UUID) (*models.CISPolicy, error) {
+	var policy models.CISPolicy
+	err := r.db.WithContext(ctx).Where("ai_policy_id = ?", id).First(&policy).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}

@@ -1,0 +1,404 @@
+# F1 — Claim Repository Bank
+
+All routes require a Bearer token.
+
+**Terminology** (PRD §3) — the API uses the formal type names; the UI labels are
+the short forms:
+
+| API `claim_type` | PRD formal name | UI label | Scored? |
+|---|---|---|---|
+| `existing` | Existing Claim | Generic Claim | Yes — `final_claim_score` |
+| `non_existing` | Non-Existing Claim | Synthetic Claim | No |
+
+The AI service may write any of several aliases into `claims.claim_type`
+(`generic`, `synthetic`, `predicted`, …); the API normalizes them to the two
+values above. See [../AI-INTEGRATION.md](../AI-INTEGRATION.md).
+
+**Status model** (PRD US1, v1.3) — one unified set shared by both types:
+`unreviewed`, `active`, `inactive`, `action_taken`. The former type-specific
+`debunk` / `prebunk` statuses were merged into `action_taken` and are rejected.
+
+---
+
+## GET /api/v1/claims/repository
+
+The entire F1 page in one request: both sections plus the "last fetched" label.
+
+**Both sections are always returned**, regardless of the selected status tab.
+Per US1 the status filter narrows claims *within* each section and never hides a
+section outright.
+
+| Query | Default | Notes |
+|---|---|---|
+| `status` | `all` | US1 status tab. |
+| `topic_ids` | — | Comma-separated UUIDs, multi-select (US6/US15). |
+
+Each section returns at most **10** claims: S1 ranked by `final_claim_score`
+descending (US7), S2 by newest first (US16). `total_in_pool` is the full
+filtered count behind the "See all" button.
+
+```bash
+curl "http://localhost:8080/api/v1/claims/repository?status=all" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "claim repository",
+  "data": {
+    "last_fetched_at": "2026-08-30T14:31:46Z",
+    "applied_status": "all",
+    "applied_topics": [],
+    "existing": {
+      "section": "S1",
+      "label": "Existing Claim (Generic Claim)",
+      "claim_type": "existing",
+      "sorted_by": "final_claim_score DESC",
+      "total_in_pool": 2,
+      "claims": [
+        {
+          "id": "c0000000-0000-0000-0000-000000000002",
+          "claim_type": "existing",
+          "claim_statement": "Flood gates were deliberately opened to protect wealthy districts",
+          "topic": { "id": "a0000000-0000-0000-0000-000000000002", "name": "Flood Response" },
+          "review_status": "unreviewed",
+          "created_at": "2026-08-30T14:32:45Z",
+          "final_claim_score": 84.9,
+          "first_caught_at": "2026-08-28T14:32:45Z",
+          "positive_statement_count": 1,
+          "negative_statement_count": 0,
+          "is_dormant": true,
+          "is_on_alert": false
+        }
+      ]
+    },
+    "non_existing": {
+      "section": "S2",
+      "label": "Non-Existing Claim (Synthetic Claim)",
+      "claim_type": "non_existing",
+      "sorted_by": "created_at DESC",
+      "total_in_pool": 1,
+      "claims": [
+        {
+          "id": "c0000000-0000-0000-0000-000000000003",
+          "claim_type": "non_existing",
+          "claim_statement": "The congestion charge revenue will be diverted to foreign contractors",
+          "topic": { "id": "a0000000-0000-0000-0000-000000000001", "name": "Congestion Charge" },
+          "review_status": "unreviewed",
+          "created_at": "2026-08-30T14:32:45Z"
+        }
+      ]
+    }
+  }
+}
+```
+
+> Note the Synthetic card carries **no** score, dates, statement counts, or bell
+> state — US18 requires those fields to be absent, not zero.
+
+### Card fields
+
+| Field | Both | Existing only | Source |
+|---|:-:|:-:|---|
+| `id`, `claim_statement`, `claim_type`, `topic`, `created_at` | ✅ | | AI `claims` |
+| `review_status` | ✅ | | Backend `cis_claim_reviews`, defaulting to `unreviewed` |
+| `final_claim_score` | | ✅ | AI `claims.final_claim_score` |
+| `first_caught_at` | | ✅ | AI `claims.first_caught_at` |
+| `positive_statement_count` | | ✅ | Count of `content_items.stance = 'supporting'` |
+| `negative_statement_count` | | ✅ | Count of `content_items.stance = 'opposing'` |
+| `is_dormant` | | ✅ | AI `claims.is_dormant` |
+| `is_on_alert` | | ✅ | Backend `cis_claim_alerts` — drives the bell icon (US14) |
+
+**Positive / Negative statements** map to the `supporting` / `opposing` stance.
+`neutral` content is excluded from both counts, mirroring the NPR definition in
+PRD 6.4.2, so the counts always agree with the score.
+
+---
+
+## GET /api/v1/claims
+
+The "See all" list (US8, US17), paginated.
+
+| Query | Default | Notes |
+|---|---|---|
+| `type` | all | `existing`, `non_existing`, `all` |
+| `status` | `all` | US1 status tab |
+| `topic_ids` | — | Comma-separated UUIDs |
+| `q` | — | Search claim text (US11, US19). `%`/`_` are escaped. |
+| `sort` | by type | `score` or `created_at`. Defaults to `score` for Existing, `created_at` for Non-Existing. |
+| `page`, `limit` | `1`, `20` | Max `limit` 200 |
+
+```bash
+curl "http://localhost:8080/api/v1/claims?type=existing&q=flood&limit=20" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**200 OK** — `data` is an array of the card objects above, with `meta` pagination.
+
+---
+
+## GET /api/v1/claims/:id
+
+The claim detail page (US12 Existing / US20 Synthetic).
+
+```bash
+curl http://localhost:8080/api/v1/claims/c0000000-0000-0000-0000-000000000001 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**200 OK** (Existing claim, abridged)
+
+```json
+{
+  "success": true,
+  "message": "claim detail",
+  "data": {
+    "id": "c0000000-0000-0000-0000-000000000001",
+    "claim_type": "existing",
+    "claim_statement": "The congestion charge is a secret tax that will bankrupt small businesses",
+    "topic": { "id": "a0000000-0000-0000-0000-000000000001", "name": "Congestion Charge" },
+    "review_status": "action_taken",
+    "created_at": "2026-08-30T14:32:45Z",
+    "updated_at": "2026-08-30T14:32:45Z",
+    "activity": {
+      "type": "debunk",
+      "content": "Fact: the congestion charge is a published, debated policy.",
+      "generated_at": "2026-08-30T14:32:45Z",
+      "available": true
+    },
+    "policies": [
+      {
+        "id": "b0000000-0000-0000-0000-000000000001",
+        "name": "Jakarta Congestion Charge 2026",
+        "source": "ai",
+        "ai_policy_id": "b0000000-0000-0000-0000-000000000001",
+        "has_document": false
+      }
+    ],
+    "first_caught_at": "2026-08-25T14:32:45Z",
+    "score_breakdown": {
+      "reach": 72.5,
+      "velocity": 61,
+      "falseness": 88,
+      "harm": 79,
+      "emotional_intensity": 66,
+      "emotional_intensity_opposing": 41,
+      "harm_breakdown": {
+        "public_safety": 85,
+        "institutional_trust": 78,
+        "economic": 70,
+        "policy_disruption": 65,
+        "human_confirmed": true,
+        "weights": { "public_safety": 0.35, "institutional_trust": 0.3, "economic": 0.2, "policy_disruption": 0.15 }
+      },
+      "claim_score": 77.4,
+      "npr": 0.22,
+      "discount_factor": 0.89,
+      "final_claim_score": 68.9,
+      "is_dormant": false,
+      "weights": { "reach": 0.15, "velocity": 0.15, "falseness": 0.3, "harm": 0.3, "emotional_intensity": 0.1 }
+    },
+    "top_accounts": [
+      { "rank": 1, "author_id": "@driver_jkt", "content_count": 2, "total_impressions": 37000 },
+      { "rank": 2, "author_id": "@warga_id", "content_count": 1, "total_impressions": 5000 }
+    ],
+    "positive_statement_count": 3,
+    "negative_statement_count": 2,
+    "is_on_alert": false
+  }
+}
+```
+
+### `score_breakdown` — the Score Transparency Requirement (US23, PRD 6.5)
+
+Every component is returned **together with** `final_claim_score`. The collapsed
+number is never served without its inputs.
+
+`weights` are included so the UI can explain the ranking without hardcoding
+constants.
+
+**Dormant claims** (US25, PRD 6.4.7): when `is_dormant` is `true`, `npr` and
+`discount_factor` are `null` and a `note` explains why. A claim with no
+supporting or opposing volume is *flagged*, never discounted — its priority must
+not be lowered on the basis of statistically unreliable data.
+
+```json
+{
+  "npr": null,
+  "discount_factor": null,
+  "final_claim_score": 84.9,
+  "is_dormant": true,
+  "note": "No supporting or opposing volume in the rolling window, so this claim is flagged dormant rather than discounted. NPR and DiscountFactor are not applicable (PRD 6.4.7)."
+}
+```
+
+`emotional_intensity_opposing` is **diagnostic only** (US24, PRD 6.4.6). It is
+displayed beside `emotional_intensity` but never enters any score.
+
+For a Synthetic claim the response omits `score_breakdown`, `top_accounts`,
+`first_caught_at`, the statement counts, and `is_on_alert`; `activity.type`
+is `"prebunk"`.
+
+> `activity` is served from the AI service's cache (`claims.activity_content`).
+> Viewing a claim **never** triggers a new AI generation, per US12/US20.
+
+---
+
+## GET /api/v1/claims/:id/statements
+
+Paginated source posts behind a claim (US12).
+
+| Query | Default | Values |
+|---|---|---|
+| `stance` | `all` | `positive` (= supporting), `negative` (= opposing), `neutral`, `all` |
+| `page`, `limit` | `1`, `20` | |
+
+```bash
+curl "http://localhost:8080/api/v1/claims/$ID/statements?stance=negative" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "claim statements",
+  "data": [
+    {
+      "id": "6f1c...",
+      "text": "Actually revenue funds buses",
+      "source": "twitter",
+      "author_id": "@transit_fact",
+      "location": null,
+      "stance": "opposing",
+      "outrage_score": null,
+      "impressions": 30000,
+      "positive_reaction_count": null,
+      "negative_reaction_count": null,
+      "created_at": "2026-08-30T14:32:45Z"
+    }
+  ],
+  "meta": { "page": 1, "limit": 20, "total": 2, "total_pages": 1 }
+}
+```
+
+---
+
+## GET /api/v1/claims/:id/top-accounts
+
+The Top 5 Accounts panel (US12).
+
+Ranked over **Supporting-side** content only, matching the Reach parameter's
+scope in PRD 6.1.1, ordered by contributed impressions with post count as the
+tiebreaker.
+
+| Query | Default |
+|---|---|
+| `limit` | `5` |
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "top accounts",
+  "data": [
+    { "rank": 1, "author_id": "@driver_jkt", "content_count": 2, "total_impressions": 37000 }
+  ]
+}
+```
+
+> The PRD flags this requirement's source instruction as truncated and asks for
+> confirmation. This implements the documented interpretation — *accounts
+> driving the claim's spread*. If you intend something else (opposing accounts,
+> engagement-ranked, or bot-like accounts), only the ordering in
+> `ListTopAccounts` needs to change.
+
+---
+
+## GET /api/v1/claims/:id/policies
+
+Correlated public policies. Many-to-many for Existing claims (US12), one-to-many
+for Synthetic claims (US20).
+
+`source` distinguishes where the policy record came from:
+
+- `cis` — registered through F2. Includes `status`, `rolled_out_date`, and `has_document`.
+- `ai` — created directly by the AI service, with no F2 upload behind it.
+
+---
+
+## GET /api/v1/claims/:id/score-history
+
+`final_claim_score` over time, from the backend-owned snapshot table.
+
+| Query | Default | Values |
+|---|---|---|
+| `granularity` | `week` | `day`, `week`, `month`, `year` |
+| `from`, `to` | — | RFC3339 or `YYYY-MM-DD` |
+
+```json
+{
+  "success": true,
+  "message": "claim score history",
+  "data": {
+    "claim_id": "c0000000-0000-0000-0000-000000000001",
+    "granularity": "month",
+    "points": [
+      { "bucket_start": "2026-08-01T00:00:00Z", "final_claim_score": 68.9, "claim_score": 77.4, "sample_count": 1 }
+    ]
+  }
+}
+```
+
+History only exists from the moment a claim is added to the F3 watchlist — the
+snapshot job only captures watched claims. Scores are averaged within each
+bucket; `sample_count` tells you how many snapshots contributed.
+
+---
+
+## PUT /api/v1/claims/:id/status
+
+Records a reviewer's decision (US10 for Existing, US18 for Synthetic).
+
+**Body**
+
+| Field | Type | Rules |
+|---|---|---|
+| `status` | string | required — `unreviewed`, `active`, `inactive`, `action_taken` |
+| `notes` | string | optional, ≤2000 |
+
+```bash
+curl -X PUT "http://localhost:8080/api/v1/claims/$ID/status" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"status":"action_taken","notes":"Debunk published on 30 Aug"}'
+```
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "claim status updated",
+  "data": {
+    "claim_id": "c0000000-0000-0000-0000-000000000001",
+    "review_status": "action_taken",
+    "notes": "Debunk published on 30 Aug",
+    "reviewed_at": "2026-08-30T14:33:24Z",
+    "reviewed_by": "21c4bbdd-f208-4696-a467-9f0edc23e910"
+  }
+}
+```
+
+> **This writes `cis_claim_reviews`, not the AI service's `claims.status`.**
+> The AI's own pipeline state is left untouched, so re-running detection can
+> never silently overwrite a human decision, and you get a free audit trail of
+> who changed what and when.
+
+**Errors** — `404 NOT_FOUND` unknown claim · `422 UNPROCESSABLE_ENTITY` /
+`400 VALIDATION_FAILED` for a status outside the four allowed values (including
+the retired `debunk` / `prebunk`).

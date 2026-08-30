@@ -24,8 +24,21 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# env file — never commit real credentials. .env.example is the template.
 .env
+.env.*
+!.env.example
+
+# Compiled output.
+# These are anchored with a leading slash on purpose: a bare `api` pattern also
+# matches the cmd/api source directory and would silently exclude main.go.
+/bin/
+/api
+/api.exe
+
+# Uploaded policy documents (STORAGE_DRIVER=local only)
+uploads/
+.verify-uploads/
 
 # Editor/IDE
 # .idea/

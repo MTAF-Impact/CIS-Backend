@@ -1,0 +1,50 @@
+# CIS Backend — deployment compose file.
+#
+# The database is Supabase-hosted, so no Postgres service is defined here.
+# Configure the connection in .env (see .env.example).
+#
+# Local development does not need Docker: `go run ./cmd/api` is the faster loop.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cis-backend:latest
+    container_name: cis-backend
+    restart: unless-stopped
+
+    # Every credential comes from .env, which is gitignored. Nothing secret is
+    # ever written into this file or the image.
+    env_file:
+      - .env
+
+    environment:
+      APP_PORT: "8080"
+
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
+    volumes:
+      # Only used when STORAGE_DRIVER=local. With the supabase driver this stays
+      # empty and is harmless.
+      #
+      # Local disk does not survive a redeploy and does not scale beyond one
+      # instance — use STORAGE_DRIVER=supabase for anything real.
+      - policy-uploads:/app/uploads
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  policy-uploads:
