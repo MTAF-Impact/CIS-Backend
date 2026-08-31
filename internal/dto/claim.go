@@ -35,6 +35,55 @@ type ClaimCard struct {
 	IsDormant              *bool      `json:"is_dormant,omitempty"`
 	// IsOnAlert drives the bell icon's filled/outline state (US14).
 	IsOnAlert *bool `json:"is_on_alert,omitempty"`
+
+	// CoordinatedNetwork drives the US61 indicator icon, so an analyst sees
+	// during triage that a network is amplifying this claim without opening it.
+	//
+	// OMITTED, not null, when nothing qualifies: US61 is explicit that there is
+	// no empty state. The field carries the full badge rather than a bare
+	// boolean because this same card component is reused unmodified on the F2
+	// policy detail page (US10, US39), and a second shape there would be the
+	// policy-specific variant US39 forbids.
+	CoordinatedNetwork *ClaimNetworkBadge `json:"coordinated_network,omitempty"`
+}
+
+// ClaimNetworkBadge is the "Coordinated network detected" indicator (US61).
+//
+// # The gate behind this field
+//
+// US61 states four conditions, ALL of which must hold before this is populated:
+//
+//  1. a network_claim_link row exists for the claim with passed_relevance_gate
+//     = true — anchoring a run to a claim does not make what it finds about
+//     that claim;
+//  2. the network's confidence band is Medium or High — F1 has no
+//     low-confidence toggle, so Low has no surface here;
+//  3. the network's review status is NOT "Dismissed — False Positive" —
+//     without this the claim page badges a network the team already examined
+//     and concluded was organic;
+//  4. the network is not suppressed under PRD 10.6.3 — rule 5 binds
+//     suppression to every surface: "a network invisible in F5 must not be
+//     reachable through F1".
+//
+// PRD 10.10 forbids expressing this as a DISJUNCTION across band and review
+// status: they are orthogonal axes, computed and assigned independently. It is
+// an AND of all four, and the two axes appear as two separate conditions rather
+// than one combined test.
+type ClaimNetworkBadge struct {
+	NetworkID         string  `json:"network_id"`
+	Label             string  `json:"label"`
+	CoordinationScore float64 `json:"coordination_score"`
+	ConfidenceBand    string  `json:"confidence_band"`
+	// ReviewStatus is displayed, not merely used for filtering. US61: an
+	// analyst deciding whether to rebut or refer must not read "Unreviewed,
+	// Medium" and "Confirmed, High" identically.
+	ReviewStatus string `json:"review_status"`
+	AccountCount int    `json:"account_count"`
+	// OtherCount is how many further networks also qualify for this claim.
+	// US61: show the highest-scoring one and a count of the others.
+	OtherCount int `json:"other_count"`
+	// DetailURL links through to the F5 network detail page.
+	DetailURL string `json:"detail_url"`
 }
 
 // HarmBreakdown exposes the Harm Severity sub-scores (PRD 6.2.4).
@@ -153,6 +202,15 @@ type ClaimDetail struct {
 	PositiveStatementCount *int64          `json:"positive_statement_count,omitempty"`
 	NegativeStatementCount *int64          `json:"negative_statement_count,omitempty"`
 	IsOnAlert              *bool           `json:"is_on_alert,omitempty"`
+
+	// CoordinatedNetwork is the US61 "Coordinated network detected" indicator.
+	// Omitted when nothing qualifies — no empty state.
+	//
+	// This is the point of F5 in daily use: it decides whether the team
+	// publicly rebuts a claim or refers it to the platform instead. Rebutting a
+	// claim that only 40 accounts are actually making hands it the reach it was
+	// engineered to obtain.
+	CoordinatedNetwork *ClaimNetworkBadge `json:"coordinated_network,omitempty"`
 }
 
 // Statement is one source post backing a claim (US12).

@@ -33,8 +33,11 @@ type ClaimService struct {
 	alerts    *repository.AlertRepository
 	policies  *repository.PolicyRepository
 	snapshots *repository.SnapshotRepository
-	settings  *SettingService
-	ai        *aiclient.Client
+	// networks resolves the US61 "Coordinated network detected" indicator. It
+	// is the one F5 dependency F1 has, and it is read-only.
+	networks *repository.NetworkRepository
+	settings *SettingService
+	ai       *aiclient.Client
 }
 
 // NewClaimService constructs a ClaimService.
@@ -43,6 +46,7 @@ func NewClaimService(
 	alerts *repository.AlertRepository,
 	policies *repository.PolicyRepository,
 	snapshots *repository.SnapshotRepository,
+	networks *repository.NetworkRepository,
 	settings *SettingService,
 	ai *aiclient.Client,
 ) *ClaimService {
@@ -51,6 +55,7 @@ func NewClaimService(
 		alerts:    alerts,
 		policies:  policies,
 		snapshots: snapshots,
+		networks:  networks,
 		settings:  settings,
 		ai:        ai,
 	}
@@ -210,9 +215,13 @@ func (s *ClaimService) toCards(ctx context.Context, rows []repository.ClaimRow) 
 	if err != nil {
 		return nil, apperr.Internal("could not resolve alert state").Wrap(err)
 	}
+	badges, err := networkBadges(ctx, s.networks, existingIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, row := range rows {
-		cards = append(cards, buildClaimCard(row, counts, alerted))
+		cards = append(cards, buildClaimCard(row, counts, alerted, badges))
 	}
 	return cards, nil
 }
@@ -225,6 +234,7 @@ func buildClaimCard(
 	row repository.ClaimRow,
 	counts map[uuid.UUID]repository.StanceCount,
 	alerted map[uuid.UUID]bool,
+	badges map[uuid.UUID]repository.NetworkBadge,
 ) dto.ClaimCard {
 	card := dto.ClaimCard{
 		ID:             row.ID.String(),
@@ -253,6 +263,10 @@ func buildClaimCard(
 	card.NegativeStatementCount = &count.Negative
 	card.IsDormant = &isDormant
 	card.IsOnAlert = &onAlert
+	// US61's triage icon. nil when nothing qualifies, so the field is omitted
+	// rather than sent as null — the PRD is explicit that there is no empty
+	// state for this indicator.
+	card.CoordinatedNetwork = toNetworkBadge(badges, row.ID)
 	return card
 }
 
@@ -326,6 +340,15 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 	}
 	onAlert := alerted[row.ID]
 	detail.IsOnAlert = &onAlert
+
+	// US61. This is the point of F5 in daily use: it is what decides whether
+	// the team publicly rebuts this claim or refers it to the platform
+	// instead, so it belongs on the page where that decision is made.
+	badges, err := networkBadges(ctx, s.networks, []uuid.UUID{row.ID})
+	if err != nil {
+		return nil, err
+	}
+	detail.CoordinatedNetwork = toNetworkBadge(badges, row.ID)
 
 	return detail, nil
 }

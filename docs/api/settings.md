@@ -103,6 +103,92 @@ that condition, never `422`.
 
 ---
 
+# The detector control panel (US62)
+
+F4 grew from one threshold to roughly thirty governed parameters. They do **not**
+live in `cis_settings`: a flat key/value store cannot express the two cross-field
+constraints, and both of them matter.
+
+- **The five signal weights must sum to 1.00.** `beta_time + beta_text +
+  beta_amp + beta_meta + beta_struct`. A composite built from weights summing to
+  0.9 is not on the 0–100 scale it claims to be on.
+- **The run cadence must be ≤ W/2.** PRD 10.5.1 requires consecutive detection
+  windows to overlap by 50%, so behaviour straddling a window boundary is not
+  split across two runs and missed by both. `W` (1–30 days) and the cadence
+  (1–24 h) are independently configurable, so an admin can otherwise legally set
+  `W = 1 day` with a 24 h cadence and open a boundary blind spot every midnight.
+
+Range validation lives in Go rather than in struct tags for the same reason: a
+tag cannot see a sibling field.
+
+## GET /api/v1/settings/detector
+
+Every parameter, plus `updated_at`, `updated_by`, and `self_exclusion_count` —
+how many accounts are excluded as the city's own comms estate, managed through
+the allowlist under its own category.
+
+## PUT /api/v1/settings/detector
+
+**Every field is optional.** An omitted parameter keeps its stored value: a
+screen that saves one threshold must not silently reset the other twenty-nine to
+whatever its form defaulted to.
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/settings/detector   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json'   -d '{"window_days": 14, "cadence_hours": 12}'
+```
+
+**422** when a value is out of range or a cross-field constraint fails, with the
+constraint written out:
+
+```json
+{
+  "success": false,
+  "message": "detector settings failed validation",
+  "error": {
+    "code": "UNPROCESSABLE_ENTITY",
+    "details": {
+      "cadence_hours": "consecutive runs must overlap by 50% of the window (PRD 10.5.1), so the cadence may not exceed 84 hours for a 7-day window"
+    }
+  }
+}
+```
+
+Validation is whole-row, not per-field: the stored row is merged with the
+submitted changes and the result is validated as a unit. Sending a new
+`window_days` that invalidates the *stored* cadence fails, which is the point —
+the pair has to be legal together.
+
+**Changing a parameter never retroactively alters a stored detection.** Each
+`detection_run` carries the whole parameter set that was in force when it ran, so
+a report generated months later reads its configuration from the run rather than
+from the current settings. This is a US62 requirement, not an optimisation.
+
+Changes take effect on the **next** detection tick, not on the next restart — the
+scheduler reads the cadence from this row on every tick.
+
+## GET /api/v1/settings/detector/ranges
+
+The min, max, default and label for each parameter, straight from PRD 10.11's
+Default Parameter Reference. Serve the form from this rather than hard-coding
+bounds in the client, so the two cannot disagree about what is legal.
+
+## GET /api/v1/settings/detector/history
+
+Every parameter change with its old value, new value, user and timestamp.
+`GET /api/v1/settings/history` returns the same log across all settings.
+
+## GET|PUT /api/v1/settings/city-timezone
+
+An IANA zone name, e.g. `Asia/Jakarta`. PRD 10.8 requires every report page
+footer to carry the generation time in UTC **and** city-local time, and nothing
+else in the system knows which city. An invalid zone name is rejected with `422`
+rather than silently falling back to UTC, which would put a wrong local time in
+a document that is going to a platform.
+
+The rest of F5 is documented in [networks.md](networks.md).
+
+---
+
 ## POST /api/v1/admin/generate-generic-claim
 
 The "Generate Generic Claim" MVP test-data button (US33).

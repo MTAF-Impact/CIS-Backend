@@ -164,6 +164,19 @@ type CronConfig struct {
 	// shows a spinning badge and empty claim lists until it is re-queued, so
 	// waiting until the next day to notice is not acceptable.
 	MatchmakingRetrySpec string
+	// DetectionSpec is how often the F5 detection tick fires. It is NOT the
+	// detection cadence: PRD 10.5.8 makes that a detector setting an admin
+	// edits at runtime (1-24 h), and a cron spec is fixed when the scheduler
+	// starts. So the tick runs at the finest cadence the setting allows —
+	// hourly — and DetectionService.RunScheduled decides whether the tick is
+	// due. The velocity trigger rides the same tick, since a growth spike is
+	// worth noticing on the same granularity.
+	DetectionSpec string
+	// SnapshotRetentionSpec drives the PRD 10.9.1 rule 7 purge of expired
+	// evidence snapshots. Daily and off-peak: it is a deletion sweep with a
+	// 24-month default horizon, so nothing about it is urgent, and it hands
+	// work to the AI service that should not compete with a detection run.
+	SnapshotRetentionSpec string
 }
 
 // Load reads the environment (optionally seeded from a .env file) into a Config.
@@ -228,6 +241,10 @@ func Load() (*Config, error) {
 			PolicyRolloutSpec:    getEnv("CRON_POLICY_ROLLOUT_SPEC", "0 1 * * *"),
 			ScoreSnapshotSpec:    getEnv("CRON_SCORE_SNAPSHOT_SPEC", "0 * * * *"),
 			MatchmakingRetrySpec: getEnv("CRON_MATCHMAKING_RETRY_SPEC", "*/15 * * * *"),
+			// Offset from the score snapshot job's :00 so the two do not
+			// contend for the AI service on the hour.
+			DetectionSpec:         getEnv("CRON_DETECTION_SPEC", "20 * * * *"),
+			SnapshotRetentionSpec: getEnv("CRON_SNAPSHOT_RETENTION_SPEC", "40 2 * * *"),
 		},
 	}
 

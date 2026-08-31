@@ -112,6 +112,7 @@ curl "http://localhost:8080/api/v1/claims/repository?status=all" \
 | `negative_statement_count` | | ✅ | Count of `content_items.stance = 'opposing'` |
 | `is_dormant` | | ✅ | AI `claims.is_dormant` |
 | `is_on_alert` | | ✅ | Backend `cis_claim_alerts` — drives the bell icon (US14) |
+| `coordinated_network` | | ✅ | F5 — drives the US61 indicator. **Omitted, not null, when nothing qualifies.** See below. |
 
 **Positive / Negative statements** map to the `supporting` / `opposing` stance.
 `neutral` content is excluded from both counts, mirroring the NPR definition in
@@ -222,6 +223,53 @@ curl http://localhost:8080/api/v1/claims/c0000000-0000-0000-0000-000000000001 \
   }
 }
 ```
+
+### `coordinated_network` — the US61 indicator
+
+Present on the claim detail **and on every claim card**, including the cards the
+F2 policy detail page renders (US10, US39) — it is the same card everywhere, and
+a policy-specific variant is explicitly forbidden.
+
+```json
+"coordinated_network": {
+  "network_id": "8f1c...",
+  "label": "Flood-gate amplification cluster",
+  "coordination_score": 78.4,
+  "confidence_band": "high",
+  "review_status": "confirmed",
+  "account_count": 47,
+  "other_count": 1,
+  "detail_url": "/api/v1/networks/8f1c..."
+}
+```
+
+`review_status` is **displayed**, not merely used for filtering. US61's own
+words: *"'Unreviewed, Medium' and 'Confirmed, High' must not read identically to
+an analyst deciding whether to rebut or refer."*
+
+Where more than one network qualifies, the highest-scoring one is returned and
+`other_count` says how many others also qualify.
+
+**The gate is a conjunction of four conditions**, all evaluated inside a single
+grouped query, never as a post-filter:
+
+1. a `network_claim_link` row exists for this claim with `passed_relevance_gate = true` — anchoring a run to a claim does not make what it finds *about* that claim;
+2. the confidence band is `medium` or `high` — F1 has no low-confidence toggle, so `low` has no surface here;
+3. the review status is **not** `dismissed_false_positive`;
+4. the network is not suppressed under PRD 10.6.3 — a network invisible in F5 must not be reachable through F1.
+
+When nothing qualifies the field is **omitted**, matching the PRD's "no empty
+state" rule. A backend running without the detection pipeline deployed behaves
+identically: no badge, no error. "The detector does not exist" and "no network
+qualifies" look the same from F1, which is correct — in both cases there is
+nothing to show.
+
+**Why it matters more than it looks.** This is the point of F5 in daily use: it
+decides whether the team publicly rebuts a claim or quietly refers it to the
+platform. Rebutting a claim that only 40 accounts are actually making hands it
+the reach it was engineered to get.
+
+Full F5 reference: [networks.md](networks.md).
 
 ### `review`
 

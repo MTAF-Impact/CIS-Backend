@@ -16,7 +16,9 @@ Everything about the schema design follows from one rule.
 | Ownership | Tables | This backend's access |
 |---|---|---|
 | **AI service** | `claims`, `content_items`, `topics`, `policies`, `claim_policies`, `topic_volume_buckets`, `claim_alerts`, `claim_score_snapshots`, `admin_settings`, `fault_lines`, `official_sources` | **SELECT only.** Never inserted, updated, deleted, or migrated. |
+| **AI service — F5 pipeline** | `detection_run`, `coordinated_network`, `network_account`, `account`, `network_edge`, `network_evidence_post`, `network_burst_bin`, `network_claim_link`, `offtopic_cluster`, `evidence_snapshot` | **SELECT only**, same rule. Their *absence* is tolerated, unlike the tables above: F1–F4 work without them and the F5 endpoints answer `503` until the pipeline exists. |
 | **This backend** | `cis_users`, `cis_refresh_tokens`, `cis_policies`, `cis_claim_reviews`, `cis_claim_alerts`, `cis_claim_score_snapshots`, `cis_settings` | Exclusive read/write, managed by GORM AutoMigrate. |
+| **This backend — F5** | `cis_network_reviews`, `cis_network_review_log`, `cis_coordination_allowlist`, `cis_common_phrases`, `cis_network_reports`, `cis_export_audit_log`, `cis_detector_settings`, `cis_setting_history` | Same. Every one records a **human decision** or a backend-generated artefact. |
 
 Of the AI-owned tables, the backend actually reads eight: `claims`,
 `content_items`, `topics`, `policies`, `claim_policies` and
@@ -153,6 +155,92 @@ restarts.
 |---|---|---|
 | `alert_threshold` | number | Global Over/Under Threshold cutoff, 0–100 (US32) |
 | `claims_last_fetched_at` | timestamp | The S1 "last fetched" label (US9/US33) |
+| `city_timezone` | string | IANA zone for the city-local half of every F5 report footer (PRD 10.8, which requires UTC **and** city-local but never names the city) |
+
+The ~20 detector parameters deliberately do **not** live here. See
+`cis_detector_settings` below.
+
+---
+
+## Backend-owned tables — F5
+
+The ownership split for F5 follows one line: **the pipeline's output is
+AI-owned, the human's judgement about it is backend-owned.** PRD 10.10 declares
+`coordinated_network.review_status` as a column on the pipeline's own table and
+`coordination_allowlist` as an unprefixed table; both are moved here instead.
+The startup guard would refuse to migrate either — but the stronger reason is
+that an analyst's verdict living on a table the pipeline rewrites would be
+erased by the next detection run, which is exactly why `cis_claim_reviews`
+exists for F1.
+
+### `cis_network_reviews` — F5 review status (US52)
+Overlay on `coordinated_network`, one row per reviewed network. Status is
+`unreviewed` / `confirmed_coordinated` / `dismissed_false_positive` /
+`action_taken` — deliberately **not** the F1 claim status set, which the PRD
+keeps separate. A status change requires a reason.
+
+### `cis_network_review_log` — append-only (US52)
+Every status change, with `from_status`, `to_status`, the mandatory reason, the
+user, the timestamp, and **`signal_profile_json`**: a write-time snapshot of the
+network's scores at the moment of the decision.
+
+The snapshot is the point. PRD 10.9.3 requires dismissals to be reviewable in
+aggregate so the false-positive rate and its signal profiles can be measured,
+and reading those scores back from `coordinated_network` at query time does not
+work — a re-run changes them. A column added later leaves every dismissal
+recorded before that point permanently unanalysable.
+
+### `cis_coordination_allowlist` — declared coordination (US56, US63)
+Accounts the team has declared as legitimately coordinating: NGOs, campaigns,
+newsrooms. The one place the read direction between the two services reverses —
+the backend owns it and **the pipeline consumes it**, via
+`GET /api/v1/internal/detection/exclusions`.
+
+Carries both an addition reason and a **separate removal reason**: US63 requires
+a reason for removal and PRD 10.10's single `reason` column can only hold one of
+the two.
+
+### `cis_common_phrases` — the phrase allowlist
+Slogans, hashtags and civic boilerplate excluded from duplication scoring, so a
+shared campaign hashtag is not read as content duplication. Required by the
+pipeline spec; PRD 10.10 declares no table for it.
+
+### `cis_network_reports` — generated artefacts (US58, US59, US60)
+One row per generated PDF or evidence-bundle ZIP: object path, SHA-256, size,
+the sections included, the redaction settings, and the version. Never
+overwritten — a report already sent to a platform must stay re-downloadable
+exactly as it was sent.
+
+### `cis_export_audit_log` — who exported what (US64)
+Report/bundle id, **network id**, **detection run id**, export type, user,
+timestamp, sections, redaction settings. The network and run ids are separate
+columns rather than PRD 10.10's single generic `object_type`/`object_id` pair,
+which can reference only one of the three.
+
+The audit row is written **before** the file is rendered, because PRD 10.8
+item 10 prints the audit entry id inside the document. "Log the export after it
+succeeds" would produce a report with an empty chain-of-custody slot.
+
+Viewable by any authenticated user, not only admins — there is no role system
+anywhere in this backend. The audit property comes from attribution and logging,
+not from an access check. See `docs/local_docs/PRD-v1.4.md` 3.3.
+
+### `cis_detector_settings` — the detector control panel (US62)
+A **typed single-row table**, not more `cis_settings` keys. ~20 governed
+parameters with two cross-field constraints a key/value store cannot express:
+the signal weights must sum to 1.00, and the run cadence must be ≤ W/2 so
+consecutive detection windows overlap by 50% (PRD 10.5.1) instead of leaving a
+boundary blind spot.
+
+Seeded with PRD 10.11's defaults on first boot, `ON CONFLICT DO NOTHING`:
+silently resetting a governed parameter to its default would be
+indistinguishable from an admin changing it, except that nothing would appear in
+the history to say who did.
+
+### `cis_setting_history` — versioned changes (US62)
+Every parameter change with its old value, new value, user and timestamp.
+Changing a parameter never retroactively alters a stored detection: each
+`detection_run` carries the whole parameter set that was in force when it ran.
 
 ---
 

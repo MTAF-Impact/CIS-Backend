@@ -4,9 +4,17 @@ Backend for **CIS (Climate Immune System)**, the platform that gives a city
 climate-communications team a scored, auditable repository of climate
 misinformation claims.
 
-Implements PRD v1.3 Phase 1: **F1** Claim Repository Bank (+ the Section 6
-scoring system), **F2** Public Policy Bank, **F3** Alert Page, **F4** Admin
-Settings. F5 (Coordinated-Network Detector) is out of scope for this version.
+Implements **PRD v1.4**: **F1** Claim Repository Bank (+ the Section 6 scoring
+system), **F2** Public Policy Bank, **F3** Alert Page, **F4** Admin Settings +
+the detector control panel, and **F5** Coordinated-Network Detector.
+
+F5's *detection maths* is not here and never will be — Leiden community
+detection, MinHash/LSH, multilingual embeddings, perceptual hashing and
+ForceAtlas2 are mature in Python and effectively absent in Go. The same split
+already governs the Section 6 claim scores: **the AI service computes, this
+backend reads, governs and presents.** What lives here is the scheduling, the
+scope and suppression rules, the human review workflow, the allowlist, the
+report and evidence-bundle generation, and the audit trail.
 
 ---
 
@@ -34,6 +42,7 @@ response envelope, error codes, auth, and shared query parameters.
 | **F2** Public Policy Bank | [api/policies.md](api/policies.md) |
 | **F3** Alert Page | [api/alerts.md](api/alerts.md) |
 | **F4** Admin Settings + utilities | [api/settings.md](api/settings.md) |
+| **F5** Coordinated-Network Detector | [api/networks.md](api/networks.md) |
 | AI service callbacks | [api/internal.md](api/internal.md) |
 
 ## Other files
@@ -41,6 +50,9 @@ response envelope, error codes, auth, and shared query parameters.
 - [sql/00_ai_reference_schema.sql](sql/00_ai_reference_schema.sql) — the AI
   team's DDL, for bootstrapping a **local** database only. Never executed by the
   app; never run it against shared Supabase.
+- [sql/01_f5_reference_schema.sql](sql/01_f5_reference_schema.sql) — the same,
+  for F5's detection pipeline tables. Columns marked `BEYOND 10.10` are this
+  backend's proposal and still need AI-team sign-off.
 
 ---
 
@@ -65,4 +77,5 @@ the full picture.
 | F1 | Claim Repository Bank | `GET /claims/repository`, `GET /claims`, `GET /claims/:id`, `PUT /claims/:id/status` |
 | F2 | Public Policy Bank | `GET /policies`, `POST /policies`, `GET /policies/:id`, `GET /policies/:id/file` |
 | F3 | Alert Page | `GET /alerts`, `POST /alerts`, `PATCH /alerts/:claimId/chart`, `GET /alerts/chart` |
-| F4 | Admin Settings | `GET|PUT /settings/alert-threshold`, `POST /admin/generate-generic-claim` |
+| F4 | Admin Settings | `GET|PUT /settings/alert-threshold`, `GET|PUT /settings/detector`, `POST /admin/generate-generic-claim` |
+| F5 | Coordinated-Network Detector | `GET /networks`, `GET /networks/:id`, `PUT /networks/:id/status`, `POST /networks/:id/reports`, `GET|POST /admin/allowlist` |

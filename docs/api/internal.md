@@ -91,5 +91,51 @@ malformed `ai_policy_id` · `400 VALIDATION_FAILED` invalid `status`.
 
 ---
 
+## GET /api/v1/internal/detection/exclusions
+
+The detector's two exclusion lists, read by the pipeline before candidate
+selection (PRD 10.5.1, 10.5.2.2).
+
+**This is the one place the read direction reverses.** Everywhere else the
+backend reads AI-owned tables; here the AI service reads a backend-owned one.
+The declared-coordination allowlist and the common-phrase list record human
+decisions — which is why they live in `cis_*` tables — but they are inputs to
+the pipeline, not outputs of it.
+
+```bash
+curl http://localhost:8080/api/v1/internal/detection/exclusions
+```
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "detector exclusion lists",
+  "data": {
+    "accounts": [
+      { "platform": "x", "platform_account_id": "1428...", "handle": "@jakartaflood_ngo" }
+    ],
+    "phrases": ["#JakartaBanjir", "lapor pak gubernur"]
+  }
+}
+```
+
+`accounts` are keyed on `(platform, platform_account_id)`, **not** on the
+handle. Handles get renamed; the platform-issued id does not, so protection
+keyed on the handle alone would lapse the moment an NGO rebranded. Removed
+entries are excluded — only active ones are returned.
+
+`phrases` are slogans, hashtags and civic boilerplate that must not count as
+content duplication. Without them a shared campaign hashtag reads as
+coordination, which is exactly how a detector accuses a genuine campaign.
+
+**Pulling this is optional.** The backend also *sends* both lists inside every
+detection-run request (Flow 7), so a pipeline that uses the request payload never
+needs to call this. It exists for a pipeline that would rather pull them at
+its own cadence, and as the surface that makes the ownership split legible.
+
+---
+
 See [../AI-INTEGRATION.md](../AI-INTEGRATION.md) for the outbound side of this
 contract — what the backend sends to the AI service.

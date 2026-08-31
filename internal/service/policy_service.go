@@ -32,6 +32,13 @@ type PolicyService struct {
 	policies *repository.PolicyRepository
 	claims   *repository.ClaimRepository
 	alerts   *repository.AlertRepository
+	// networks resolves the US61 indicator for the claim cards on the policy
+	// detail page. US10 is explicit that the icon is part of the shared card
+	// component and therefore appears here too; since this service assembles
+	// its own cards rather than calling ClaimService, wiring only that one
+	// would ship the icon on F1 and silently drop it on F2 — the
+	// policy-specific variant US39 forbids.
+	networks *repository.NetworkRepository
 	store    storage.Storage
 	ai       *aiclient.Client
 	appCfg   config.AppConfig
@@ -42,11 +49,15 @@ func NewPolicyService(
 	policies *repository.PolicyRepository,
 	claims *repository.ClaimRepository,
 	alerts *repository.AlertRepository,
+	networks *repository.NetworkRepository,
 	store storage.Storage,
 	ai *aiclient.Client,
 	appCfg config.AppConfig,
 ) *PolicyService {
-	return &PolicyService{policies: policies, claims: claims, alerts: alerts, store: store, ai: ai, appCfg: appCfg}
+	return &PolicyService{
+		policies: policies, claims: claims, alerts: alerts, networks: networks,
+		store: store, ai: ai, appCfg: appCfg,
+	}
 }
 
 // ListPoliciesQuery is the normalized F2 list input.
@@ -165,10 +176,14 @@ func (s *PolicyService) claimsForPolicy(ctx context.Context, aiPolicyID uuid.UUI
 	if err != nil {
 		return nil, apperr.Internal("could not resolve alert state").Wrap(err)
 	}
+	badges, err := networkBadges(ctx, s.networks, ids)
+	if err != nil {
+		return nil, err
+	}
 
 	cards := make([]dto.ClaimCard, 0, len(rows))
 	for _, row := range rows {
-		cards = append(cards, buildClaimCard(row, counts, alerted))
+		cards = append(cards, buildClaimCard(row, counts, alerted, badges))
 	}
 	return cards, nil
 }

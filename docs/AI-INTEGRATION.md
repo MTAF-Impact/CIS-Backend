@@ -37,7 +37,7 @@ in its own `cis_*` tables.
                       ┌──────────────────────┐
    frontend ◀────────▶│   This backend       │
                       └──────────┬───────────┘
-                                 │ 5 outbound HTTP calls
+                                 │ 8 outbound HTTP calls
                                  ▼
                           AI service HTTP API
 ```
@@ -45,7 +45,7 @@ in its own `cis_*` tables.
 **The frontend never talks to the AI service.** Every AI capability an operator
 needs must be reachable through a backend endpoint — an AI endpoint with no
 backend caller is, from the product's point of view, an endpoint that does not
-exist. That single rule is why the flow list below is six long rather than
+exist. That single rule is why the flow list below is eight long rather than
 three.
 
 | # | Flow | Direction | Trigger |
@@ -56,10 +56,16 @@ three.
 | 4 | Harm confirmation | Backend → AI | An analyst confirms or overrides the harm sub-scores (F1 detail) |
 | 5 | Score re-evaluation | Backend → AI | Hourly cron, before the snapshot; or the F4 manual trigger |
 | 6 | Sample content generation / clustering | Backend → AI | The F4 "Generate sample data" button |
+| 7 | **Detection run (F5)** | Backend → AI | The detection tick, a velocity spike, or an analyst's "run detection" |
+| 8 | **Evidence snapshot purge (F5)** | Backend → AI | The nightly retention sweep |
+| — | **Exclusion lists (F5)** | AI → Backend | The pipeline reads the allowlist before candidate selection |
 
-Everything else is plain database reads. A seventh flow — F5's coordinated
-network detection, PRD v1.4 — is not started on either side and is deliberately
-out of scope here.
+Everything else is plain database reads.
+
+Flows 7 and 8 are **not yet implemented on the AI side.** The backend's half is
+complete and inert: with no pipeline deployed, F5's endpoints answer `503` and
+F1–F4 are unaffected. See Flow 7 below for the contract the AI service needs to
+satisfy.
 
 Every outbound call degrades gracefully: with `AI_SERVICE_URL` empty the backend
 runs normally, policies record `processing_status: "skipped"`, and every F4
@@ -462,6 +468,95 @@ Paths: `pathGenerateContent` and `pathClusterNow` in
 
 ---
 
+## Flow 7 — Detection run (F5, PRD 10.5.8)
+
+**This flow is a hand-off, not a computation.** PRD 10.5.8 sets the performance
+target at "a 5,000-account, 7-day run completes in under 10 minutes on commodity
+hardware" — the worst case the system is allowed to accept, and far beyond any
+HTTP request the backend should hold open. So the call announces the run, the AI
+service acknowledges in milliseconds, and the work happens in its background.
+Same shape as Flow 1, same reason. `AI_SERVICE_TIMEOUT` (the short budget)
+applies: a slow response here means the hand-off failed, not that detection is
+slow.
+
+```http
+POST /api/v1/admin/detection-runs      (backend, on demand)
+  or the hourly detection tick / velocity trigger
+  ↓
+POST {AI_SERVICE_URL}/api/v1/detection/runs
+```
+
+```json
+{
+  "claim_ids": ["c0000000-..."],
+  "trigger_source": "scheduled",
+  "window_start": "2026-08-24T00:00:00Z",
+  "window_end": "2026-08-31T00:00:00Z",
+  "parameters": { "window_days": 7, "beta_time": 0.30, "...": "the full detector configuration" },
+  "exclusions": { "accounts": [], "phrases": [] }
+}
+```
+
+**Expected response** — acknowledgement only:
+
+```json
+{ "run_id": "...", "status": "pending" }
+```
+
+The backend stores nothing from this response beyond echoing the id back to the
+caller. `detection_run.status` is the source of truth, it is a row both services
+can see, and duplicating it would create a second answer. **The backend never
+polls** — it reads the detection tables.
+
+Three details that are not arbitrary:
+
+- **The window is computed by the backend**, not by the AI service. PRD 10.5.1
+  requires consecutive runs to overlap by 50% of `W`, and that rule is enforced
+  by a cross-field validation on the settings (`cadence <= W/2`). Computing the
+  window on the far side of the hand-off would put the guarantee out of reach of
+  its own check.
+- **The parameters are sent, not read.** US62 requires that changing a parameter
+  never retroactively alters a stored detection. Sending them with the request is
+  what makes that true even if an admin edits the configuration while a run is in
+  flight. Please persist them to `detection_run.parameters_json` verbatim.
+- **The exclusions travel with the request.** The declared-coordination allowlist
+  and the common-phrase list are backend-owned and pipeline-read — the one place
+  the read direction between the two services reverses. They are also fetchable
+  at `GET /api/v1/internal/detection/exclusions` if the pipeline would rather
+  pull them.
+
+**A scope rule the backend already enforces, so the pipeline does not have to
+rediscover it:** detection never runs over Non-Existing/Synthetic claims
+(PRD 10.3). A predicted claim has no real posts, so there is nothing to cluster.
+The on-demand endpoint rejects one with `422`, and the scheduled sweep filters on
+claim type as well as on status Active.
+
+What the pipeline must write is `docs/sql/01_f5_reference_schema.sql`. Columns
+marked **`BEYOND 10.10`** there are the backend's proposal for requirements
+Section 10 states but 10.10 declares no column for; they need AI-team sign-off.
+
+## Flow 8 — Evidence snapshot purge (F5, PRD 10.9.1 rule 7)
+
+```http
+POST {AI_SERVICE_URL}/api/v1/detection/snapshots/purge
+{ "network_ids": ["..."] }
+  ↓
+{ "snapshots_purged": 12 }
+```
+
+**The list is computed by the backend, and this can never be a TTL on the AI
+side.** Snapshots are retained for a configurable period (default 24 months) and
+then purged — *except* where a report was generated from them, in which case the
+snapshot lives as long as the report. That exception depends on
+`cis_network_reports`, a backend-owned table the pipeline cannot see. A blanket
+TTL would eventually purge the evidence under a report already submitted to a
+platform, and a report whose evidence has been purged is worthless as evidence.
+
+So the backend selects the eligible snapshots and hands over the list. The rows
+are AI-owned, so the deletion itself is the pipeline's to perform.
+
+---
+
 ## Configuration
 
 **Backend side** (`.env`):
@@ -592,7 +687,17 @@ Collected in one place, in priority order.
 | 1 | Honour `force` on Flow 1 (re-run and supersede, instead of short-circuiting) | Without it a failed matchmaking can never recover and replacing a policy document never updates its correlations. The backend already sends it. |
 | 2 | Create a `claim_policies` link for the Flow 3 demo claim | US33's "fully populated" requirement; the Related Policies panel is empty without it. |
 | 3 | Honour `callback_url` on Flow 1, falling back to `BACKEND_URL` | Lets one AI deployment serve several backend environments, and removes the highest-consequence unset-by-default variable. |
+| 4 | **`content_items.posted_at`** — when the account published, distinct from when we captured it | **The F5 blocker.** Every temporal signal depends on it. Today's table has only a capture time, so Synchrony cannot be computed at all — a whole signal family, and the one the PRD's own worked example leads with. |
+| 5 | **An `account` table** — durable platform account identity, with `created_at_platform`, `profile_hash`, bio, declared location and client/app string | Three of F5's five signals need a durable account entity. `content_items.author_id` is a string on a post, so Provenance and Automation have no source at all, and the allowlist has nothing stable to key on. |
+| 6 | Sign off (or amend) the `BEYOND 10.10` columns in `docs/sql/01_f5_reference_schema.sql` | Nine requirements stated in PRD Section 10 have no column in 10.10. The backend's proposals are in that file, each marked with its gap number. |
+| 7 | Implement Flow 7 and Flow 8 | Without them F5 has no data. Everything downstream — the read models, the review workflow, the report, the badge on F1 — is built and waiting. |
 
-None of the three breaks anything today: unknown request fields are ignored, so
-the backend's half of each is already in place and inert until the AI side
-catches up.
+Asks 1–3 break nothing today: unknown request fields are ignored, so the
+backend's half of each is already in place and inert until the AI side catches
+up.
+
+**Asks 4 and 5 are different — they are the F5 blocker.** Three of the five
+detection signals cannot be computed at all from the current `content_items`
+table, and no amount of backend work changes that. This is the one item on this
+page that has to be settled before F5 can produce anything. See
+`docs/local_docs/PRD-v1.4.md` Section 5 for the signal-by-signal analysis.

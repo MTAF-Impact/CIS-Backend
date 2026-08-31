@@ -153,6 +153,10 @@ docker run -d --name cis-pg \
 
 # 2. Load the AI team's schema so claim endpoints have tables to read
 docker exec -i cis-pg psql -U postgres -d cis -f - < docs/sql/00_ai_reference_schema.sql
+
+# 3. Optional — F5's detection tables, so the network endpoints answer with data
+#    instead of 503. Skip it and F1-F4 still work perfectly.
+docker exec -i cis-pg psql -U postgres -d cis -f - < docs/sql/01_f5_reference_schema.sql
 ```
 
 Then point `.env` at it and switch storage to disk:
@@ -163,9 +167,10 @@ STORAGE_DRIVER=local
 STORAGE_LOCAL_DIR=./uploads
 ```
 
-> `00_ai_reference_schema.sql` is a convenience copy for local bootstrapping
-> only. **Never run it against the shared Supabase database** — the AI team owns
-> those tables there.
+> Both SQL files are convenience copies for local bootstrapping only. **Never run
+> them against the shared Supabase database** — the AI team owns those tables
+> there. `01_f5_reference_schema.sql` additionally contains columns marked
+> `BEYOND 10.10` that are still this backend's proposal, not an agreed contract.
 
 ---
 

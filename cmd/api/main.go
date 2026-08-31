@@ -71,13 +71,28 @@ func main() {
 	policyRepo := repository.NewPolicyRepository(db)
 	snapshotRepo := repository.NewSnapshotRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
+	// F5 — Coordinated-Network Detector. networkRepo reads the AI-owned
+	// pipeline tables and the cis_* overlays; it is also F1's and F2's one F5
+	// dependency, for the US61 indicator on claim cards.
+	networkRepo := repository.NewNetworkRepository(db)
+	allowlistRepo := repository.NewAllowlistRepository(db)
+	reportRepo := repository.NewReportRepository(db)
 
 	authSvc := service.NewAuthService(userRepo, cfg.Auth)
 	settingSvc := service.NewSettingService(settingRepo)
-	claimSvc := service.NewClaimService(claimRepo, alertRepo, policyRepo, snapshotRepo, settingSvc, ai)
-	policySvc := service.NewPolicyService(policyRepo, claimRepo, alertRepo, store, ai, cfg.App)
+	claimSvc := service.NewClaimService(claimRepo, alertRepo, policyRepo, snapshotRepo, networkRepo, settingSvc, ai)
+	policySvc := service.NewPolicyService(policyRepo, claimRepo, alertRepo, networkRepo, store, ai, cfg.App)
 	alertSvc := service.NewAlertService(alertRepo, claimRepo, snapshotRepo, settingSvc)
 	adminSvc := service.NewAdminService(ai, settingSvc, policyRepo, claimRepo)
+
+	// The F5 graph. allowlistSvc comes before detectionSvc because the pipeline
+	// is handed the exclusion lists at dispatch, and reportSvc wraps networkSvc
+	// because a report is a rendering of the same detail payload the API
+	// serves — the document and the screen must not be able to disagree.
+	networkSvc := service.NewNetworkService(networkRepo, claimRepo, policyRepo, settingSvc)
+	allowlistSvc := service.NewAllowlistService(allowlistRepo, networkRepo, reportRepo)
+	reportSvc := service.NewReportService(networkRepo, reportRepo, networkSvc, settingSvc, store, cfg.App)
+	detectionSvc := service.NewDetectionService(networkRepo, claimRepo, settingSvc, allowlistSvc, ai)
 
 	handlers := router.Handlers{
 		Health:  handler.NewHealthHandler(db, cfg, store, ai),
@@ -88,6 +103,11 @@ func main() {
 		Alert:   handler.NewAlertHandler(alertSvc),
 		Setting: handler.NewSettingHandler(settingSvc),
 		Admin:   handler.NewAdminHandler(adminSvc, alertSvc),
+
+		Network:         handler.NewNetworkHandler(networkSvc, reportSvc),
+		Allowlist:       handler.NewAllowlistHandler(allowlistSvc),
+		Detection:       handler.NewDetectionHandler(detectionSvc, reportSvc),
+		DetectorSetting: handler.NewDetectorSettingsHandler(settingSvc, allowlistSvc),
 	}
 
 	app := fiber.New(fiber.Config{
@@ -111,7 +131,7 @@ func main() {
 
 	router.Register(app, handlers, authSvc)
 
-	cron := scheduler.New(cfg.Cron, policySvc, alertSvc, adminSvc)
+	cron := scheduler.New(cfg.Cron, policySvc, alertSvc, adminSvc, detectionSvc)
 	if err := cron.Start(); err != nil {
 		log.Fatalf("scheduler error: %v", err)
 	}

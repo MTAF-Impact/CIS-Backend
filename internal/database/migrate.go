@@ -33,6 +33,18 @@ var ownedModels = []any{
 	&models.CISClaimAlert{},
 	&models.CISClaimScoreSnapshot{},
 	&models.CISSetting{},
+
+	// F5 — Coordinated-Network Detector. Every one of these records a human
+	// decision or a backend-generated artefact; the detector's own output is
+	// AI-owned and appears in optionalAITables below, never here.
+	&models.CISNetworkReview{},
+	&models.CISNetworkReviewLog{},
+	&models.CISCoordinationAllowlist{},
+	&models.CISCommonPhrase{},
+	&models.CISNetworkReport{},
+	&models.CISExportAuditLog{},
+	&models.CISDetectorSettings{},
+	&models.CISSettingHistory{},
 }
 
 // requiredAITables are read by the backend but owned by the AI service. Their
@@ -41,6 +53,20 @@ var ownedModels = []any{
 // pipeline has not run yet.
 var requiredAITables = []string{
 	"claims", "topics", "policies", "claim_policies", "content_items",
+}
+
+// optionalAITables are the F5 detection pipeline's output tables (PRD 10.10).
+// They are AI-owned and read-only here, exactly like requiredAITables, but
+// their absence is a different situation: F1-F4 work perfectly without them,
+// and they only exist once the detection pipeline has been built and has run.
+//
+// So a missing one is reported at a lower volume than a missing claims table,
+// and the F5 endpoints answer 503 rather than leaking a Postgres
+// "relation does not exist" — see repository.ErrPipelineUnavailable.
+var optionalAITables = []string{
+	"detection_run", "coordinated_network", "network_account", "account",
+	"network_edge", "network_evidence_post", "network_burst_bin",
+	"network_claim_link", "offtopic_cluster", "evidence_snapshot",
 }
 
 // Migrate creates and updates the backend-owned cis_* tables, then seeds
@@ -62,6 +88,11 @@ func Migrate(db *gorm.DB, cfg *config.Config) error {
 
 	if err := seedSettings(db); err != nil {
 		return fmt.Errorf("seed settings: %w", err)
+	}
+	if cfg.DB.AutoMigrate {
+		if err := seedDetectorSettings(db); err != nil {
+			return fmt.Errorf("seed detector settings: %w", err)
+		}
 	}
 	if err := seedUser(db, cfg.Auth); err != nil {
 		return fmt.Errorf("seed user: %w", err)
@@ -100,6 +131,20 @@ func warnMissingAITables(db *gorm.DB) {
 				"For local development see docs/sql/00_ai_reference_schema.sql",
 			strings.Join(missing, ", "))
 	}
+
+	var missingF5 []string
+	for _, table := range optionalAITables {
+		if !db.Migrator().HasTable(table) {
+			missingF5 = append(missingF5, table)
+		}
+	}
+	if len(missingF5) > 0 {
+		log.Printf(
+			"[migrate] F5 detection tables not present (%d of %d missing). "+
+				"The Coordinated-Network Detector endpoints will answer 503 until the AI service "+
+				"provisions them; F1-F4 are unaffected. See docs/sql/01_f5_reference_schema.sql",
+			len(missingF5), len(optionalAITables))
+	}
 }
 
 // seedSettings inserts the F4 defaults only when absent, so an operator's saved
@@ -117,6 +162,13 @@ func seedSettings(db *gorm.DB) error {
 			Value:       time.Now().UTC().Format(time.RFC3339),
 			ValueType:   "timestamp",
 			Description: "Timestamp shown as 'last fetched' on the Existing Claim section (PRD US9/US33).",
+		},
+		{
+			Key:       models.SettingCityTimezone,
+			Value:     models.DefaultCityTimezone,
+			ValueType: "string",
+			Description: "IANA timezone for the city-local half of every F5 report footer timestamp (PRD 10.8). " +
+				"The PRD requires 'UTC and city-local time' on every page but never names the city.",
 		},
 	}
 
@@ -167,4 +219,23 @@ func seedUser(db *gorm.DB, cfg config.AuthConfig) error {
 
 	log.Printf("[migrate] seeded initial user %s", email)
 	return nil
+}
+
+// seedDetectorSettings inserts PRD 10.11's default parameter set as the single
+// cis_detector_settings row, only when absent.
+//
+// DoNothing on conflict is load-bearing: an operator's tuned thresholds must
+// survive every restart, and silently resetting a governed parameter to its
+// default would be indistinguishable from an admin changing it, except that
+// nothing would appear in cis_setting_history to say who did.
+func seedDetectorSettings(db *gorm.DB) error {
+	defaults := models.DefaultDetectorSettings()
+	now := time.Now().UTC()
+	defaults.CreatedAt = now
+	defaults.UpdatedAt = now
+
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoNothing: true,
+	}).Create(&defaults).Error
 }

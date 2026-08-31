@@ -146,8 +146,14 @@ The policy detail page (US39).
 
 Returns the policy card plus `description` and the two correlated claim lists.
 **Both lists use the exact same claim card shape as F1**, so the frontend renders
-them with the identical component — including score, bell state, and status
-control for Existing claims.
+them with the identical component — including score, bell state, status control
+for Existing claims, and the US61 `coordinated_network` indicator.
+
+That last one does not come for free on this side. `PolicyService` assembles
+these cards itself rather than calling into `ClaimService`, so the F5 lookup is
+wired into both. Wiring only the claim service would ship the icon on F1 and
+silently drop it here — precisely the policy-specific variant US39 forbids. The
+field is documented in [claims.md](claims.md#coordinated_network--the-us61-indicator).
 
 ```json
 {
