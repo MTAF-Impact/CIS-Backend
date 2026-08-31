@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -80,18 +81,22 @@ func (s *AuthService) Register(ctx context.Context, req dto.RegisterRequest) (*d
 
 // Login verifies credentials and issues a token pair.
 func (s *AuthService) Login(ctx context.Context, req dto.LoginRequest) (*dto.AuthResponse, error) {
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+
 	user, err := s.users.FindUserByEmail(ctx, req.Email)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			// Compare against a dummy hash anyway so response time does not
 			// reveal whether the email exists.
 			_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(req.Password))
+			log.Printf("[auth] login failed: no account for %q", email)
 			return nil, apperr.Unauthorized("invalid email or password")
 		}
 		return nil, apperr.Internal("could not look up account").Wrap(err)
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		log.Printf("[auth] login failed: wrong password for %q (user %s)", email, user.ID)
 		return nil, apperr.Unauthorized("invalid email or password")
 	}
 
@@ -112,6 +117,7 @@ func (s *AuthService) Refresh(ctx context.Context, raw string) (*dto.AuthRespons
 	stored, err := s.users.FindRefreshToken(ctx, hash)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
+			log.Print("[auth] refresh rejected: unknown token")
 			return nil, apperr.Unauthorized("invalid refresh token")
 		}
 		return nil, apperr.Internal("could not look up refresh token").Wrap(err)
@@ -119,6 +125,9 @@ func (s *AuthService) Refresh(ctx context.Context, raw string) (*dto.AuthRespons
 
 	now := time.Now().UTC()
 	if !stored.IsUsable(now) {
+		// A revoked-but-present token is a rotated one being replayed — worth a
+		// line on its own, since it can mean the token was stolen.
+		log.Printf("[auth] refresh rejected: token expired or revoked (user %s)", stored.UserID)
 		return nil, apperr.Unauthorized("refresh token is expired or revoked")
 	}
 

@@ -6,14 +6,16 @@ package middleware
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
+	"github.com/gofiber/fiber/v2/utils"
 	"github.com/google/uuid"
 
 	"github.com/cis/cis-backend/internal/config"
@@ -27,6 +29,11 @@ const (
 	CtxUserID    = "auth_user_id"
 	CtxUserEmail = "auth_user_email"
 	CtxUserName  = "auth_user_name"
+
+	// ctxRequestID is the locals key RequestID stores the correlation id under.
+	// Every log line quotes it so a request can be followed across the access
+	// line and any error lines it produced.
+	ctxRequestID = "requestid"
 )
 
 // ErrorHandler converts any error returned by a handler into the standard
@@ -36,7 +43,7 @@ func ErrorHandler(isProduction bool) fiber.ErrorHandler {
 	return func(c *fiber.Ctx, err error) error {
 		if appErr, ok := apperr.As(err); ok {
 			if appErr.Status >= fiber.StatusInternalServerError {
-				log.Printf("[error] %s %s: %v", c.Method(), c.Path(), appErr)
+				log.Printf("[error] %s %s %s: %v", requestID(c), c.Method(), c.Path(), appErr)
 			}
 			return response.Fail(c, appErr)
 		}
@@ -60,7 +67,7 @@ func ErrorHandler(isProduction bool) fiber.ErrorHandler {
 			})
 		}
 
-		log.Printf("[error] unhandled %s %s: %v", c.Method(), c.Path(), err)
+		log.Printf("[error] unhandled %s %s %s: %v", requestID(c), c.Method(), c.Path(), err)
 		message := "an unexpected error occurred"
 		if !isProduction {
 			message = err.Error()
@@ -76,16 +83,78 @@ func Recover() fiber.Handler {
 
 // RequestID attaches a correlation id to every request and response.
 func RequestID() fiber.Handler {
-	return requestid.New()
+	return requestid.New(requestid.Config{
+		ContextKey: ctxRequestID,
+		// UUIDv4 rather than the default counter-backed generator, whose
+		// sequential ids would leak the server's request volume into our logs.
+		Generator: utils.UUIDv4,
+	})
 }
 
-// Logger writes one structured line per request.
-func Logger() fiber.Handler {
-	return logger.New(logger.Config{
-		Format:     "${time} ${locals:requestid} ${status} ${latency} ${method} ${path}\n",
-		TimeFormat: "2006-01-02T15:04:05Z",
-		TimeZone:   "UTC",
-	})
+// AccessLog writes exactly one line per request:
+//
+//	[http] <request-id> <method> <path> <status> <latency> [user=<id>] [error=<code>]
+//
+// The user and error fields appear only when they apply, so a run of healthy
+// reads stays quiet and the lines that matter stand out. It carries no
+// timestamp of its own — the standard logger prefix already stamps every line
+// in UTC.
+//
+// This must sit outside Recover in the chain so a recovered panic still yields
+// a line.
+func AccessLog() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		start := time.Now()
+
+		// Resolve the chain error through the app error handler now, before the
+		// status is read, so the code logged is the one the client received.
+		// This mirrors what Fiber's own logger middleware does.
+		chainErr := c.Next()
+		if chainErr != nil {
+			if err := c.App().ErrorHandler(c, chainErr); err != nil {
+				_ = c.SendStatus(fiber.StatusInternalServerError)
+			}
+		}
+
+		status := c.Response().StatusCode()
+
+		// Liveness and readiness probes are polled continuously by the platform;
+		// a successful one is noise. A failing one still gets a line.
+		if status < fiber.StatusBadRequest && strings.HasPrefix(c.Path(), "/health") {
+			return nil
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "[http] %s %s %s %d %s",
+			requestID(c), c.Method(), c.Path(), status,
+			time.Since(start).Round(100*time.Microsecond))
+		// The matched route pattern names the endpoint (and so the handler),
+		// which the concrete path can't when it carries ids. Omitted when it
+		// adds nothing: static routes, or a request that matched no route.
+		if pattern := c.Route().Path; pattern != c.Path() && pattern != "/" {
+			fmt.Fprintf(&b, " route=%s", pattern)
+		}
+		if uid := UserIDFromContext(c); uid != nil {
+			fmt.Fprintf(&b, " user=%s", uid)
+		}
+		if appErr, ok := apperr.As(chainErr); ok {
+			fmt.Fprintf(&b, " error=%s", appErr.Code)
+		} else if chainErr != nil {
+			fmt.Fprintf(&b, " error=%q", chainErr.Error())
+		}
+		log.Print(b.String())
+
+		return nil
+	}
+}
+
+// requestID returns the correlation id attached by RequestID, or "-" when the
+// middleware has not run yet.
+func requestID(c *fiber.Ctx) string {
+	if v, ok := c.Locals(ctxRequestID).(string); ok && v != "" {
+		return v
+	}
+	return "-"
 }
 
 // CORS restricts browser access to the configured origins.

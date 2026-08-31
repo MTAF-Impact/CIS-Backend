@@ -125,8 +125,10 @@ func main() {
 	})
 
 	app.Use(middleware.RequestID())
+	// AccessLog wraps Recover so a recovered panic is still reported as a
+	// request line, not just a stack trace on stderr.
+	app.Use(middleware.AccessLog())
 	app.Use(middleware.Recover())
-	app.Use(middleware.Logger())
 	app.Use(middleware.CORS(cfg.App))
 
 	router.Register(app, handlers, authSvc)
