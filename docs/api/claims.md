@@ -32,6 +32,7 @@ section outright.
 |---|---|---|
 | `status` | `all` | US1 status tab. |
 | `topic_ids` | — | Comma-separated UUIDs, multi-select (US6/US15). |
+| `q` | — | Search claim text within each section (US11, US19). `%`/`_` are escaped, same as `GET /claims`. |
 
 Each section returns at most **10** claims: S1 ranked by `final_claim_score`
 descending (US7), S2 by newest first (US16). `total_in_pool` is the full
@@ -68,7 +69,7 @@ curl "http://localhost:8080/api/v1/claims/repository?status=all" \
           "created_at": "2026-08-30T14:32:45Z",
           "final_claim_score": 84.9,
           "first_caught_at": "2026-08-28T14:32:45Z",
-          "positive_statement_count": 1,
+          "positive_statement_count": 0,
           "negative_statement_count": 0,
           "is_dormant": true,
           "is_on_alert": false
@@ -161,6 +162,11 @@ curl http://localhost:8080/api/v1/claims/c0000000-0000-0000-0000-000000000001 \
     "claim_statement": "The congestion charge is a secret tax that will bankrupt small businesses",
     "topic": { "id": "a0000000-0000-0000-0000-000000000001", "name": "Congestion Charge" },
     "review_status": "action_taken",
+    "review": {
+      "notes": "Confirmed false; drafted a correction for the comms channel.",
+      "reviewed_by": "d0000000-0000-0000-0000-000000000001",
+      "reviewed_at": "2026-08-30T14:40:00Z"
+    },
     "created_at": "2026-08-30T14:32:45Z",
     "updated_at": "2026-08-30T14:32:45Z",
     "activity": {
@@ -194,10 +200,10 @@ curl http://localhost:8080/api/v1/claims/c0000000-0000-0000-0000-000000000001 \
         "human_confirmed": true,
         "weights": { "public_safety": 0.35, "institutional_trust": 0.3, "economic": 0.2, "policy_disruption": 0.15 }
       },
-      "claim_score": 77.4,
+      "claim_score": 76.7,
       "npr": 0.22,
       "discount_factor": 0.89,
-      "final_claim_score": 68.9,
+      "final_claim_score": 68.3,
       "is_dormant": false,
       "weights": { "reach": 0.15, "velocity": 0.15, "falseness": 0.3, "harm": 0.3, "emotional_intensity": 0.1 }
     },
@@ -212,6 +218,15 @@ curl http://localhost:8080/api/v1/claims/c0000000-0000-0000-0000-000000000001 \
 }
 ```
 
+### `review`
+
+The reviewer's decision behind the current `review_status`, read back from
+`cis_claim_reviews`. `null` when the claim has never had a status set (i.e.
+`review_status` is defaulting to `unreviewed`). This is a single overlay row
+per claim, not a change log — it always reflects only the *most recent*
+`PUT /claims/:id/status` call, so earlier notes are overwritten rather than
+retained.
+
 ### `score_breakdown` — the Score Transparency Requirement (US23, PRD 6.5)
 
 Every component is returned **together with** `final_claim_score`. The collapsed
@@ -219,6 +234,20 @@ number is never served without its inputs.
 
 `weights` are included so the UI can explain the ranking without hardcoding
 constants.
+
+**A note on this worked example:** `reach`, `velocity`, `falseness`, `harm`,
+`harm_breakdown`, and `claim_score` are all written by the AI service and only
+clamped/passed through here (`internal/scoring`) — this backend does not
+compute any of them itself, so it cannot guarantee they satisfy PRD 6.2.4/6.3
+for real data. `claim_score` above (`76.7`) and `final_claim_score` (`68.3`)
+have been set to the values the formulas in 6.3/6.4.4 actually produce from the
+other fields shown, so a reader who multiplies through gets a consistent
+example. `harm` (`79`) still does not equal the weighted sum of
+`harm_breakdown` (`0.35(85)+0.30(78)+0.20(70)+0.15(65) = 76.9`); since
+`harm_breakdown.human_confirmed` is `true`, one plausible reading is that a
+reviewer confirmed the four sub-scores but separately overrode the composite
+`harm` value — **this needs confirming with the AI service integration, not
+assumed**.
 
 **Dormant claims** (US25, PRD 6.4.7): when `is_dormant` is `true`, `npr` and
 `discount_factor` are `null` and a `note` explains why. A claim with no
@@ -399,6 +428,7 @@ curl -X PUT "http://localhost:8080/api/v1/claims/$ID/status" \
 > never silently overwrite a human decision, and you get a free audit trail of
 > who changed what and when.
 
-**Errors** — `404 NOT_FOUND` unknown claim · `422 UNPROCESSABLE_ENTITY` /
-`400 VALIDATION_FAILED` for a status outside the four allowed values (including
-the retired `debunk` / `prebunk`).
+**Errors** — `404 NOT_FOUND` unknown claim · `400 VALIDATION_FAILED` for a
+status outside the four allowed values (including the retired `debunk` /
+`prebunk`) — caught by request validation before the handler runs, so this is
+the only code you will see for that condition, never `422`.

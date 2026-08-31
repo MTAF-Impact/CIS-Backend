@@ -148,6 +148,43 @@ func (h *PolicyHandler) Update(c *fiber.Ctx) error {
 	return response.OK(c, "public policy updated", card)
 }
 
+// ReplaceFile handles PUT /api/v1/policies/:id/file, swapping the policy's
+// document without losing its id, ai_policy_id, or existing claim
+// correlations the way DELETE + re-create would.
+func (h *PolicyHandler) ReplaceFile(c *fiber.Ctx) error {
+	id, err := parsePathUUID(c, "id")
+	if err != nil {
+		return err
+	}
+
+	header, err := c.FormFile("file")
+	if err != nil {
+		return apperr.BadRequest("a policy document must be uploaded in the 'file' field")
+	}
+
+	mimeType, err := storage.ValidateDocument(header.Filename, header.Header.Get("Content-Type"))
+	if err != nil {
+		return apperr.Unprocessable("%s", err.Error())
+	}
+
+	file, err := header.Open()
+	if err != nil {
+		return apperr.BadRequest("could not read the uploaded file").Wrap(err)
+	}
+	defer file.Close()
+
+	card, err := h.policies.ReplaceFile(c.UserContext(), id, service.ReplaceFileInput{
+		FileName: header.Filename,
+		MimeType: mimeType,
+		FileSize: header.Size,
+		File:     file,
+	})
+	if err != nil {
+		return err
+	}
+	return response.OK(c, "policy document replaced", card)
+}
+
 // Delete handles DELETE /api/v1/policies/:id.
 func (h *PolicyHandler) Delete(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")

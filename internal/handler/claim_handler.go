@@ -38,7 +38,7 @@ func (h *ClaimHandler) Repository(c *fiber.Ctx) error {
 		return apperr.BadRequest("topic_ids must be a comma-separated list of UUIDs")
 	}
 
-	res, err := h.claims.Repository(c.UserContext(), status, topicIDs)
+	res, err := h.claims.Repository(c.UserContext(), status, topicIDs, c.Query("q"))
 	if err != nil {
 		return err
 	}

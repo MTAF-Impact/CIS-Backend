@@ -58,12 +58,12 @@ type ListClaimsQuery struct {
 //
 // Both sections are always returned. Per US1 the status tab filters claims
 // within each section and never hides a section outright.
-func (s *ClaimService) Repository(ctx context.Context, status string, topicIDs []uuid.UUID) (*dto.RepositoryResponse, error) {
-	existing, err := s.buildSection(ctx, models.ClaimTypeExisting, status, topicIDs)
+func (s *ClaimService) Repository(ctx context.Context, status string, topicIDs []uuid.UUID, search string) (*dto.RepositoryResponse, error) {
+	existing, err := s.buildSection(ctx, models.ClaimTypeExisting, status, topicIDs, search)
 	if err != nil {
 		return nil, err
 	}
-	nonExisting, err := s.buildSection(ctx, models.ClaimTypeNonExisting, status, topicIDs)
+	nonExisting, err := s.buildSection(ctx, models.ClaimTypeNonExisting, status, topicIDs, search)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (s *ClaimService) Repository(ctx context.Context, status string, topicIDs [
 	}, nil
 }
 
-func (s *ClaimService) buildSection(ctx context.Context, claimType, status string, topicIDs []uuid.UUID) (*dto.ClaimSection, error) {
+func (s *ClaimService) buildSection(ctx context.Context, claimType, status string, topicIDs []uuid.UUID, search string) (*dto.ClaimSection, error) {
 	// S1 ranks by FinalClaimScore (US7); S2 by newest predicted claim (US16).
 	sortBy := repository.SortByScore
 	section, label, sortedBy := "S1", "Existing Claim (Generic Claim)", "final_claim_score DESC"
@@ -103,6 +103,7 @@ func (s *ClaimService) buildSection(ctx context.Context, claimType, status strin
 		ClaimType:    claimType,
 		ReviewStatus: status,
 		TopicIDs:     topicIDs,
+		Search:       search,
 		SortBy:       sortBy,
 		Limit:        SectionSize,
 	}
@@ -265,6 +266,14 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 	}
 	if row.TopicName != nil {
 		detail.Topic = &dto.TopicRef{ID: row.TopicID.String(), Name: *row.TopicName}
+	}
+	if row.ReviewedAt != nil {
+		review := &dto.ClaimReview{Notes: row.ReviewNotes, ReviewedAt: row.ReviewedAt}
+		if row.ReviewedBy != nil {
+			id := row.ReviewedBy.String()
+			review.ReviewedBy = &id
+		}
+		detail.Review = review
 	}
 
 	policies, err := s.correlatedPolicies(ctx, row)

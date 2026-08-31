@@ -34,6 +34,11 @@ type ClaimRow struct {
 	models.AIClaim `gorm:"embedded"`
 	ReviewStatus   string  `gorm:"column:review_status"`
 	TopicName      *string `gorm:"column:topic_name"`
+	// Review overlay fields, populated only by FindClaimByID (US10/US18 cards
+	// never need to read these back, only the detail page does).
+	ReviewNotes *string    `gorm:"column:review_notes"`
+	ReviewedBy  *uuid.UUID `gorm:"column:reviewed_by"`
+	ReviewedAt  *time.Time `gorm:"column:reviewed_at"`
 }
 
 // ClaimFilter describes the F1 list/search query (US1, US6, US7, US11, US15,
@@ -133,7 +138,11 @@ func (r *ClaimRepository) FindClaimByID(ctx context.Context, id uuid.UUID) (*Cla
 		Table("claims AS c").
 		Joins("LEFT JOIN cis_claim_reviews AS rev ON rev.claim_id = c.id").
 		Joins("LEFT JOIN topics AS t ON t.id = c.topic_id").
-		Select("c.*, COALESCE(rev.status, ?) AS review_status, t.name AS topic_name", models.ReviewStatusUnreviewed).
+		Select(
+			"c.*, COALESCE(rev.status, ?) AS review_status, t.name AS topic_name, "+
+				"rev.notes AS review_notes, rev.reviewed_by AS reviewed_by, rev.reviewed_at AS reviewed_at",
+			models.ReviewStatusUnreviewed,
+		).
 		Where("c.id = ?", id).
 		Limit(1).
 		Scan(&row).Error

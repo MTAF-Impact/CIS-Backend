@@ -202,8 +202,13 @@ Downloads the policy document (US37, the card's download icon).
 | `mode` | redirect | `307` redirect to a time-limited signed URL (Supabase). |
 | `mode=json` | — | Returns the URL as JSON instead of redirecting. |
 
-With the `local` storage driver there is no signed URL, so the endpoint streams
-the bytes directly with `Content-Disposition: attachment`.
+With the `local` storage driver there is no signed URL, so by default the
+endpoint streams the bytes directly with `Content-Disposition: attachment`.
+**Under the `local` driver, `mode=json` does not 404 or stream bytes** — it
+returns the same JSON shape as the `supabase` driver, except `url` is this same
+`/api/v1/policies/:id/file` path (not a signed URL) and `is_signed_url` is
+`false`; the caller must re-request this endpoint without `mode=json` to get
+the bytes.
 
 ```bash
 curl -L -o policy.pdf "http://localhost:8080/api/v1/policies/$ID/file" \
@@ -278,6 +283,41 @@ Edits policy metadata. All fields optional; at least one required.
 | `description` | ≤5000 |
 
 **Errors** — `400 BAD_REQUEST` if no updatable field was supplied.
+
+---
+
+## PUT /api/v1/policies/:id/file
+
+Replaces a policy's document in place — the id, `ai_policy_id`, and every
+existing claim correlation are preserved, unlike `DELETE` + re-create.
+
+**Content-Type:** `multipart/form-data`
+
+| Part | Type | Rules |
+|---|---|---|
+| `file` | file | **required** — PDF or Word only (`.pdf`, `.doc`, `.docx`). Same validation as `POST /policies`. |
+
+```bash
+curl -X PUT "http://localhost:8080/api/v1/policies/$ID/file" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@congestion-charge-v2.pdf"
+```
+
+**200 OK** — returns the updated policy card (same shape as `POST /policies`).
+
+On success the backend, in order:
+
+1. Validates and stores the new document (old file is deleted once the DB
+   record points at the new one; if the DB update fails, the newly-uploaded
+   file is deleted instead so nothing is orphaned either way).
+2. If `AI_SERVICE_URL` is configured, resets `processing_status` to `pending`
+   and re-queues AI matchmaking against the new document, the same way
+   `/rematch` does — so correlations catch up with the new file. Existing
+   correlations are left as-is until the new job reports back.
+
+**Errors** — `404 NOT_FOUND` unknown policy · `422 UNPROCESSABLE_ENTITY` wrong
+file format · `400 BAD_REQUEST` no `file` part · `409 CONFLICT` matchmaking is
+already running for this policy.
 
 ---
 

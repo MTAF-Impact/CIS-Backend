@@ -97,7 +97,9 @@ curl -X PUT http://localhost:8080/api/v1/settings/alert-threshold \
 The range is fixed to 0–100 because the threshold is compared against
 `final_claim_score`, which PRD 6.5 pins to that scale.
 
-**Errors** — `400 VALIDATION_FAILED` / `422 UNPROCESSABLE_ENTITY` outside 0–100.
+**Errors** — `400 VALIDATION_FAILED` outside 0–100 — caught by request
+validation before the handler runs, so this is the only code you will see for
+that condition, never `422`.
 
 ---
 

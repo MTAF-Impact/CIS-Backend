@@ -106,15 +106,26 @@ type ActivityContent struct {
 	Available   bool       `json:"available"`
 }
 
+// ClaimReview is the reviewer's latest note on a claim's status, read back on
+// the detail page. It reflects only the most recent decision recorded by
+// PUT /claims/:id/status — cis_claim_reviews is a single overlay row per
+// claim, not a change log, so earlier notes are not retained.
+type ClaimReview struct {
+	Notes      *string    `json:"notes"`
+	ReviewedBy *string    `json:"reviewed_by"`
+	ReviewedAt *time.Time `json:"reviewed_at"`
+}
+
 // ClaimDetail is the claim detail page payload (US12, US20).
 type ClaimDetail struct {
-	ID             string    `json:"id"`
-	ClaimType      string    `json:"claim_type"`
-	ClaimStatement string    `json:"claim_statement"`
-	Topic          *TopicRef `json:"topic,omitempty"`
-	ReviewStatus   string    `json:"review_status"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string       `json:"id"`
+	ClaimType      string       `json:"claim_type"`
+	ClaimStatement string       `json:"claim_statement"`
+	Topic          *TopicRef    `json:"topic,omitempty"`
+	ReviewStatus   string       `json:"review_status"`
+	Review         *ClaimReview `json:"review,omitempty"`
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
 
 	Activity ActivityContent `json:"activity"`
 	Policies []PolicyRef     `json:"policies"`

@@ -73,6 +73,7 @@ func Register(app *fiber.App, cfg *config.Config, h Handlers, auth *service.Auth
 	policies.Post("/", h.Policy.Create)
 	policies.Get("/:id", h.Policy.Detail)
 	policies.Get("/:id/file", h.Policy.Download)
+	policies.Put("/:id/file", h.Policy.ReplaceFile)
 	policies.Get("/:id/processing", h.Policy.ProcessingStatus)
 	policies.Post("/:id/rematch", h.Policy.Rematch)
 	policies.Patch("/:id", h.Policy.Update)

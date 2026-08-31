@@ -460,6 +460,81 @@ func (s *PolicyService) Update(ctx context.Context, id uuid.UUID, req dto.Update
 	return &card, nil
 }
 
+// ReplaceFileInput is the new document behind PUT /api/v1/policies/:id/file.
+type ReplaceFileInput struct {
+	FileName string
+	MimeType string
+	FileSize int64
+	File     io.Reader
+}
+
+// ReplaceFile swaps a policy's document in place, preserving its id,
+// ai_policy_id, and every existing claim correlation — unlike DELETE +
+// re-create, which loses all three. Matchmaking is re-queued against the new
+// document so correlations stay current, the same way /rematch re-queues it
+// after a failure.
+func (s *PolicyService) ReplaceFile(ctx context.Context, id uuid.UUID, in ReplaceFileInput) (*dto.PolicyCard, error) {
+	row, err := s.policies.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NotFound("policy not found")
+		}
+		return nil, apperr.Internal("could not load policy").Wrap(err)
+	}
+	if row.ProcessingStatus == models.ProcessingInProgress {
+		return nil, apperr.Conflict("matchmaking is already running for this policy")
+	}
+
+	objectPath := storage.BuildObjectPath(id, in.FileName)
+	object, err := s.store.Upload(ctx, objectPath, in.File, in.FileSize, in.MimeType)
+	if err != nil {
+		return nil, apperr.Internal("could not store the policy document").Wrap(err)
+	}
+
+	size := in.FileSize
+	if size <= 0 {
+		size = object.Size
+	}
+
+	updates := map[string]any{
+		"file_name":       in.FileName,
+		"file_path":       object.Path,
+		"file_mime_type":  object.MimeType,
+		"file_size_bytes": size,
+	}
+	if s.ai.Enabled() {
+		updates["processing_status"] = models.ProcessingPending
+		updates["processing_attempts"] = 0
+		updates["processing_error"] = nil
+	}
+
+	oldPath := row.FilePath
+	if err := s.policies.Update(ctx, id, updates); err != nil {
+		// Roll back the upload so a failed write does not orphan a document.
+		if delErr := s.store.Delete(context.Background(), object.Path); delErr != nil {
+			log.Printf("[policy] orphaned document %s after failed file replace: %v", object.Path, delErr)
+		}
+		return nil, apperr.Internal("could not update the policy").Wrap(err)
+	}
+
+	if oldPath != "" && oldPath != object.Path {
+		if delErr := s.store.Delete(context.Background(), oldPath); delErr != nil {
+			log.Printf("[policy] could not delete superseded document %s: %v", oldPath, delErr)
+		}
+	}
+
+	if s.ai.Enabled() {
+		s.startMatchmaking(id)
+	}
+
+	updated, err := s.policies.FindByID(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal("could not reload the policy").Wrap(err)
+	}
+	card := toPolicyCard(*updated)
+	return &card, nil
+}
+
 // Delete removes a policy and its stored document.
 func (s *PolicyService) Delete(ctx context.Context, id uuid.UUID) error {
 	row, err := s.policies.FindByID(ctx, id)

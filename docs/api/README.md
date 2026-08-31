@@ -2,6 +2,10 @@
 
 Base URL: `http://localhost:8080` (local) · All feature routes live under `/api/v1`.
 
+**Exception:** the two [health probes](health.md), `GET /health` and
+`GET /health/ready`, are mounted at the server root, *not* under `/api/v1` —
+concatenating the prefix onto them 404s.
+
 Documentation is intentionally Markdown, not Swagger/OpenAPI.
 
 | Resource | File |
