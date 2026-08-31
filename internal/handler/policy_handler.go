@@ -279,7 +279,12 @@ func (h *PolicyHandler) Rematch(c *fiber.Ctx) error {
 
 // MatchmakingResult handles
 // POST /api/v1/internal/policies/:id/matchmaking-result, the AI service's
-// callback. Guarded by the X-Internal-Key middleware.
+// callback.
+//
+// Unauthenticated: this route has no guard, by design. The caller is trusted
+// because it can reach the route at all, which makes the network boundary
+// load-bearing — see router.go. Treat the body as it already is treated:
+// validated field by field, and applied only to the policy named in the path.
 func (h *PolicyHandler) MatchmakingResult(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {

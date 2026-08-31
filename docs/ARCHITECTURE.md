@@ -47,7 +47,7 @@ The rules that keep this honest:
 | `internal/repository` | All SQL |
 | `internal/service` | Business logic |
 | `internal/handler` | Fiber handlers |
-| `internal/middleware` | Error translation, logging, CORS, JWT auth, internal API key |
+| `internal/middleware` | Error translation, logging, CORS, JWT auth |
 | `internal/router` | The full route table — one place to see the API surface |
 | `internal/storage` | File-store interface + Supabase and local drivers |
 | `internal/aiclient` | Outbound HTTP to the AI service |

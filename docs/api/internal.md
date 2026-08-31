@@ -1,28 +1,12 @@
 # Internal Routes — AI Service Callbacks
 
-These endpoints are machine-to-machine. They are **not** protected by the
-operator JWT.
+These endpoints are machine-to-machine callbacks from the AI service. They do
+not take an operator JWT — send the request with `Content-Type` and the body.
 
-If both sides configure `INTERNAL_API_KEY`, the route requires a matching
-shared secret instead:
-
-```http
-X-Internal-Key: <INTERNAL_API_KEY>
-```
-
-The key is compared in constant time.
-
-If `INTERNAL_API_KEY` is left unset (the default for this deployment — no
-secret is exchanged with the AI service), the route accepts requests with no
-`X-Internal-Key` header at all. This is only safe when the backend and AI
-service are reachable exclusively over a private/internal network — never
-expose these routes to the public internet without a configured key.
-
-| Error | Cause |
-|---|---|
-| `401 UNAUTHORIZED` | `INTERNAL_API_KEY` is configured, and the header is missing or does not match. |
-
-> Do not expose these routes to browsers, and never ship the key to a client.
+They belong to the private integration between the backend and the AI service
+and are not part of the operator-facing API. Deploy them so they are reachable
+only from the AI service, for example by restricting the `/api/v1/internal/`
+prefix at the ingress/load balancer or binding it to an internal-only listener.
 
 ---
 

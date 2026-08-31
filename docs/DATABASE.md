@@ -15,8 +15,24 @@ Everything about the schema design follows from one rule.
 
 | Ownership | Tables | This backend's access |
 |---|---|---|
-| **AI service** | `claims`, `content_items`, `topics`, `policies`, `claim_policies`, `topic_volume_buckets`, `narratives`, `intervention_responses`, `fault_lines`, `official_sources` | **SELECT only.** Never inserted, updated, deleted, or migrated. |
+| **AI service** | `claims`, `content_items`, `topics`, `policies`, `claim_policies`, `topic_volume_buckets`, `claim_alerts`, `claim_score_snapshots`, `admin_settings`, `fault_lines`, `official_sources` | **SELECT only.** Never inserted, updated, deleted, or migrated. |
 | **This backend** | `cis_users`, `cis_refresh_tokens`, `cis_policies`, `cis_claim_reviews`, `cis_claim_alerts`, `cis_claim_score_snapshots`, `cis_settings` | Exclusive read/write, managed by GORM AutoMigrate. |
+
+Of the AI-owned tables, the backend actually reads eight: `claims`,
+`content_items`, `topics`, `policies`, `claim_policies` and
+`claim_score_snapshots` on the hot paths, plus `topic_volume_buckets` for
+diagnostics. `claim_alerts`, `admin_settings`, `fault_lines` and
+`official_sources` are listed for completeness and never queried — the first two
+because the backend keeps its own authoritative copies (see **Duplicated
+state**), the last two because they are the AI pipeline's own inputs.
+
+> Corrected on 2026-08-31: this matrix previously listed `narratives` and
+> `intervention_responses`, which the AI service no longer has, and omitted
+> `claim_alerts`, `claim_score_snapshots` and `admin_settings`, which it does.
+> The two dead models were also deleted from `internal/models/ai_tables.go`;
+> `AIInterventionResponse` in particular looked like the home of the
+> `core_fact` / `nuanced_flag` / `reiterated_fact` Truth Sandwich fields, which
+> actually live on `claims.debunk_*`.
 
 ### Why it is enforced, not just documented
 
@@ -140,6 +156,42 @@ restarts.
 
 ---
 
+## Duplicated state
+
+Three concepts exist twice, once per service. **The backend's copy is
+authoritative in every case** — it is the only one the frontend ever sees.
+
+| Concept | AI table | Backend table | Authority |
+|---|---|---|---|
+| Alert threshold | `admin_settings.over_threshold` (default 70) | `cis_settings.alert_threshold` (default 70) | **Backend.** The AI copy stays at 70 forever and silently diverges the moment an operator changes the threshold on F4. |
+| Watchlist | `claim_alerts` | `cis_claim_alerts` | **Backend.** The AI copy stays empty. |
+| Score history | `claim_score_snapshots` | `cis_claim_score_snapshots` | **Backend writes only its own** — but it *reads* both. See below. |
+
+This is not a bug today, because nothing reads the AI's copies for a
+frontend-facing decision. It is written down because it is easy to mistake one
+for the other later: anyone querying the AI service's `GET /alerts` or
+`GET /admin/settings` — its standalone admin panel, or a frontend shortcut that
+skips the backend — gets stale, wrong data. Deleting the AI-side tables is not
+necessary; its own admin panel legitimately uses them.
+
+**Score history is the one place the backend reads the AI's copy.** The two
+tables have complementary shapes:
+
+| | `cis_claim_score_snapshots` | `claim_score_snapshots` (AI) |
+|---|---|---|
+| Written | Hourly, by cron | On every rescore, by the AI service |
+| Covers | Watched claims only | Every claim it touches |
+| Columns | The full score breakdown | `final_claim_score` only |
+
+`GET /claims/:id/score-history` is offered on every claim, but the backend's own
+table is empty for any claim that was never bell-icon'd. So
+`SnapshotRepository.Series` reads both and merges them per time bucket, summing
+before averaging so a bucket with three backend rows and one AI row weights them
+equally. The AI read is best-effort: if that table is missing, the query falls
+back to backend snapshots alone rather than failing.
+
+---
+
 ## How AI columns are consumed
 
 | PRD concept | AI column | Notes |
@@ -150,6 +202,9 @@ restarts.
 | ClaimScore / NPR / DiscountFactor / FinalClaimScore | matching columns | Returned together (US23) |
 | Dormancy | `claims.is_dormant` | Suppresses NPR + discount (US25) |
 | Debunk/Prebunk draft | `claims.activity_content`, `activity_generated_at` | Served from cache; never regenerated on view |
+| Truth Sandwich blocks | `claims.debunk_core_fact`, `debunk_nuanced_flag`, `debunk_reiterated_fact` | The same debunk pre-split into three labelled blocks; returned as `activity.debunk` |
+| Harm confirmation | `claims.harm_human_confirmed` | Read on the detail page, set through `PUT /claims/:id/harm/confirm`, which proxies to the AI service — the backend never writes the column itself |
+| Score history | `claim_score_snapshots.final_claim_score`, `recorded_at` | Merged with `cis_claim_score_snapshots` for the F3 chart |
 | Positive statements | `content_items.stance = 'supporting'` | US12 |
 | Negative statements | `content_items.stance = 'opposing'` | US12; `neutral` excluded, matching PRD 6.4.2 |
 | Top 5 Accounts | `content_items` grouped by `author_id`, Supporting side | US12, scope per PRD 6.1.1 |
@@ -172,3 +227,26 @@ shared Supabase database — the AI team owns those tables there. See
 
 If the AI tables are absent, the backend still starts and logs a warning; F2 and
 F4 work, while claim and topic endpoints return empty results.
+
+---
+
+## When the AI side is reset
+
+The AI service's `scripts/seed_demo_data.py` and `scripts/reset_schema.py` both
+correctly leave `cis_*` alone — but every backend reference into an AI table is
+a **soft** one, with no foreign key, precisely because the backend must never
+constrain a table it does not own. So nothing cascades:
+
+- `cis_claim_reviews.claim_id` → dangling
+- `cis_claim_alerts.claim_id` → dangling; F3 lists claims that no longer exist
+- `cis_claim_score_snapshots.claim_id` → dangling
+- `cis_policies.ai_policy_id` → points at a deleted `policies.id`, so F2 shows a
+  "completed" badge above empty claim lists
+
+Nothing errors. The UI just quietly shows wrong things.
+`POST /api/v1/admin/reconcile` sweeps all four: it deletes the orphaned overlay
+rows and re-queues any policy whose AI record vanished, so its correlations can
+be rebuilt. It refuses to run when the `claims` table is empty — that usually
+means the backend is pointed at the wrong database rather than that the data was
+deliberately wiped — unless called with `force: true`. See
+[api/settings.md](api/settings.md).

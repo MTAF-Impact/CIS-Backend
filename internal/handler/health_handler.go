@@ -52,14 +52,36 @@ func (h *HealthHandler) Ready(c *fiber.Ctx) error {
 	}
 
 	payload := fiber.Map{
-		"database":        dbStatus,
-		"storage_driver":  h.store.Driver(),
-		"ai_service":      map[string]any{"configured": h.ai.Enabled()},
-		"internal_routes_authenticated": h.cfg.Internal.APIKey != "",
+		"database":       dbStatus,
+		"storage_driver": h.store.Driver(),
+		"ai_service":     h.aiStatus(ctx),
 	}
 
 	if dbStatus != "up" {
 		return apperr.Unavailable("database is not reachable").WithDetails(payload)
 	}
 	return response.OK(c, "ready", payload)
+}
+
+// aiStatus reports both whether the AI service is configured and whether it
+// actually answers — a URL being set says nothing about anything listening on
+// it, and the two failures need different fixes.
+//
+// Deliberately non-fatal. The backend serves F1, F2 and F3 in full against a
+// dead AI service (every claim read is a plain database query), so an
+// unreachable AI service must never fail readiness and take the pods out of
+// rotation. Only the write-through flows degrade, and they say so themselves.
+func (h *HealthHandler) aiStatus(ctx context.Context) map[string]any {
+	status := map[string]any{"configured": h.ai.Enabled()}
+	if !h.ai.Enabled() {
+		return status
+	}
+
+	if err := h.ai.Health(ctx); err != nil {
+		status["reachable"] = false
+		status["error"] = err.Error()
+		return status
+	}
+	status["reachable"] = true
+	return status
 }

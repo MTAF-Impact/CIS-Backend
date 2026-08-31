@@ -258,12 +258,26 @@ Lightweight endpoint for polling the "Processing" badge (US42).
 
 Poll while `is_processing` is `true`; every 3–5 seconds is plenty.
 
+A badge that never clears is recovered automatically. `processing` is otherwise
+a terminal state on this side — only the AI service's callback moves a policy out
+of it, and that callback is best-effort and never retried on its end. So a
+background sweep (`CRON_MATCHMAKING_RETRY_SPEC`, every 15 minutes) re-queues any
+policy that has been `processing` for longer than `AI_MATCHMAKING_STALE_AFTER`
+(default 30 minutes), alongside anything `pending` or `failed`. `attempts` bounds
+that at 3 tries, after which a manual `/rematch` is needed.
+
 ---
 
 ## POST /api/v1/policies/:id/rematch
 
 Re-queues AI matchmaking, resetting the attempt counter. Use after a `failed`
 status.
+
+This sends `force: true` to the AI service, asking it to genuinely re-run the
+pipeline rather than re-report the previous run's counts — which for a failed
+run are typically `0, 0`. See [AI-INTEGRATION.md](../AI-INTEGRATION.md#force--please-honour-this):
+until the AI service honours the flag, a failed matchmaking cannot recover, and
+this button reports `completed` with the failed run's numbers.
 
 **200 OK** — same body as `/processing`.
 
@@ -311,9 +325,13 @@ On success the backend, in order:
    record points at the new one; if the DB update fails, the newly-uploaded
    file is deleted instead so nothing is orphaned either way).
 2. If `AI_SERVICE_URL` is configured, resets `processing_status` to `pending`
-   and re-queues AI matchmaking against the new document, the same way
-   `/rematch` does — so correlations catch up with the new file. Existing
-   correlations are left as-is until the new job reports back.
+   and re-queues AI matchmaking against the new document with `force: true`, the
+   same way `/rematch` does — so correlations catch up with the new file.
+   Existing correlations are left as-is until the new job reports back.
+
+   The `force` flag carries the same caveat as `/rematch`: until the AI service
+   honours it, the replaced document is never read and correlations stay pinned
+   to the superseded file.
 
 **Errors** — `404 NOT_FOUND` unknown policy · `422 UNPROCESSABLE_ENTITY` wrong
 file format · `400 BAD_REQUEST` no `file` part · `409 CONFLICT` matchmaking is

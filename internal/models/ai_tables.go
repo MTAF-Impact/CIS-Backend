@@ -110,6 +110,13 @@ type AIClaim struct {
 	ActivityContent     *string    `gorm:"column:activity_content"`
 	ActivityGeneratedAt *time.Time `gorm:"column:activity_generated_at"`
 
+	// The Truth Sandwich's three blocks, split out of ActivityContent by the AI
+	// service specifically so the frontend can render three labelled sections
+	// instead of one paragraph. Existing claims only; NULL on Synthetic ones.
+	DebunkCoreFact       *string `gorm:"column:debunk_core_fact"`
+	DebunkNuancedFlag    *string `gorm:"column:debunk_nuanced_flag"`
+	DebunkReiteratedFact *string `gorm:"column:debunk_reiterated_fact"`
+
 	CreatedAt time.Time `gorm:"column:created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at"`
 }
@@ -189,43 +196,25 @@ type AITopicVolumeBucket struct {
 // TableName pins the AI-owned table name.
 func (AITopicVolumeBucket) TableName() string { return "topic_volume_buckets" }
 
-// AINarrative is the AI service's `narratives` table. READ ONLY.
-// Not surfaced by any Phase 1 endpoint; mapped for completeness.
-type AINarrative struct {
-	ID                      uuid.UUID `gorm:"column:id;type:uuid;primaryKey"`
-	Title                   string    `gorm:"column:title"`
-	Summary                 *string   `gorm:"column:summary"`
-	GrowthVelocity          float64   `gorm:"column:growth_velocity"`
-	EmotionalIntensity      float64   `gorm:"column:emotional_intensity"`
-	GeographicConcentration float64   `gorm:"column:geographic_concentration"`
-	FaultLineRelevance      float64   `gorm:"column:fault_line_relevance"`
-	OverallRiskScore        float64   `gorm:"column:overall_risk_score"`
-	RiskLevel               string    `gorm:"column:risk_level"`
-	Status                  string    `gorm:"column:status"`
-	CreatedAt               time.Time `gorm:"column:created_at"`
-	UpdatedAt               time.Time `gorm:"column:updated_at"`
+// AIClaimScoreSnapshot is the AI service's `claim_score_snapshots` table: an
+// append-only history of final_claim_score. READ ONLY.
+//
+// The AI service appends a row every time it rescores a claim — on clustering,
+// on a harm confirmation, and on POST /claims/rescore — for every claim
+// touched. That is event-driven and covers every claim, where the backend's own
+// cis_claim_score_snapshots is sampled hourly and only for watched claims. The
+// F3 chart therefore reads both and merges them; see SnapshotRepository.Series.
+//
+// It carries no claim_score column, only the final value.
+type AIClaimScoreSnapshot struct {
+	ID              uuid.UUID `gorm:"column:id;type:uuid;primaryKey"`
+	ClaimID         uuid.UUID `gorm:"column:claim_id;type:uuid"`
+	FinalClaimScore float64   `gorm:"column:final_claim_score"`
+	RecordedAt      time.Time `gorm:"column:recorded_at"`
 }
 
 // TableName pins the AI-owned table name.
-func (AINarrative) TableName() string { return "narratives" }
-
-// AIInterventionResponse is the AI service's `intervention_responses` table.
-// READ ONLY. Not surfaced by any Phase 1 endpoint.
-type AIInterventionResponse struct {
-	ID             uuid.UUID  `gorm:"column:id;type:uuid;primaryKey"`
-	NarrativeID    *uuid.UUID `gorm:"column:narrative_id;type:uuid"`
-	ResponseType   string     `gorm:"column:response_type"`
-	CoreFact       *string    `gorm:"column:core_fact"`
-	NuancedFlag    *string    `gorm:"column:nuanced_flag"`
-	ReiteratedFact *string    `gorm:"column:reiterated_fact"`
-	Status         string     `gorm:"column:status"`
-	ReviewerNotes  *string    `gorm:"column:reviewer_notes"`
-	CreatedAt      time.Time  `gorm:"column:created_at"`
-	UpdatedAt      time.Time  `gorm:"column:updated_at"`
-}
-
-// TableName pins the AI-owned table name.
-func (AIInterventionResponse) TableName() string { return "intervention_responses" }
+func (AIClaimScoreSnapshot) TableName() string { return "claim_score_snapshots" }
 
 // AIFaultLine is the AI service's `fault_lines` table. READ ONLY.
 type AIFaultLine struct {

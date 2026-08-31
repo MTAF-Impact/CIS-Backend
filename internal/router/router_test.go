@@ -7,7 +7,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/cis/cis-backend/internal/config"
 	"github.com/cis/cis-backend/internal/handler"
 	"github.com/cis/cis-backend/internal/middleware"
 	"github.com/cis/cis-backend/internal/service"
@@ -23,9 +22,8 @@ func newTestApp(t *testing.T) *fiber.App {
 	// The real error handler is wired in so rejected requests produce the same
 	// status codes they would in production.
 	app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler(false)})
-	cfg := &config.Config{Internal: config.InternalConfig{APIKey: "test-key"}}
 
-	Register(app, cfg, Handlers{
+	Register(app, Handlers{
 		Health:  &handler.HealthHandler{},
 		Auth:    &handler.AuthHandler{},
 		Claim:   &handler.ClaimHandler{},
@@ -79,6 +77,7 @@ func TestEveryDocumentedRouteIsRegistered(t *testing.T) {
 		{fiber.MethodGet, "/api/v1/claims/:id/policies"},
 		{fiber.MethodGet, "/api/v1/claims/:id/score-history"},
 		{fiber.MethodPut, "/api/v1/claims/:id/status"},
+		{fiber.MethodPut, "/api/v1/claims/:id/harm/confirm"},
 
 		{fiber.MethodGet, "/api/v1/policies"},
 		{fiber.MethodGet, "/api/v1/policies/years"},
@@ -103,6 +102,10 @@ func TestEveryDocumentedRouteIsRegistered(t *testing.T) {
 
 		{fiber.MethodPost, "/api/v1/admin/generate-generic-claim"},
 		{fiber.MethodPost, "/api/v1/admin/snapshot-scores"},
+		{fiber.MethodPost, "/api/v1/admin/generate-sample-content"},
+		{fiber.MethodPost, "/api/v1/admin/cluster-now"},
+		{fiber.MethodPost, "/api/v1/admin/rescore"},
+		{fiber.MethodPost, "/api/v1/admin/reconcile"},
 
 		{fiber.MethodPost, "/api/v1/internal/policies/:id/matchmaking-result"},
 	}
@@ -138,6 +141,7 @@ func TestProtectedRoutesRejectAnonymousRequests(t *testing.T) {
 		{fiber.MethodGet, "/api/v1/claims/" + id + "/policies"},
 		{fiber.MethodGet, "/api/v1/claims/" + id + "/score-history"},
 		{fiber.MethodPut, "/api/v1/claims/" + id + "/status"},
+		{fiber.MethodPut, "/api/v1/claims/" + id + "/harm/confirm"},
 		{fiber.MethodGet, "/api/v1/policies"},
 		{fiber.MethodGet, "/api/v1/policies/years"},
 		{fiber.MethodPost, "/api/v1/policies"},
@@ -158,6 +162,10 @@ func TestProtectedRoutesRejectAnonymousRequests(t *testing.T) {
 		{fiber.MethodPut, "/api/v1/settings/alert-threshold"},
 		{fiber.MethodPost, "/api/v1/admin/generate-generic-claim"},
 		{fiber.MethodPost, "/api/v1/admin/snapshot-scores"},
+		{fiber.MethodPost, "/api/v1/admin/generate-sample-content"},
+		{fiber.MethodPost, "/api/v1/admin/cluster-now"},
+		{fiber.MethodPost, "/api/v1/admin/rescore"},
+		{fiber.MethodPost, "/api/v1/admin/reconcile"},
 	}
 
 	for _, r := range protected {
@@ -177,64 +185,31 @@ func TestProtectedRoutesRejectAnonymousRequests(t *testing.T) {
 	}
 }
 
-// TestInternalRouteRequiresInternalKey checks the AI service callback is
-// guarded by the shared secret rather than by the operator JWT.
-func TestInternalRouteRequiresInternalKey(t *testing.T) {
+// TestInternalRouteIsUnauthenticated pins a deliberate decision: the AI service
+// callback carries no shared secret, so the route must be reachable with no
+// credentials of any kind — neither an operator JWT nor an X-Internal-Key.
+//
+// This is a security-relevant default, and the test exists so that reintroducing
+// a guard is a visible, deliberate change rather than a silent one. If it starts
+// failing, someone added auth: update docs/api/internal.md and tell the AI team
+// before shipping, because their callback will start 401ing.
+//
+// The protection is at the network edge instead — /api/v1/internal/* must not be
+// routed from the public internet. See router.go.
+func TestInternalRouteIsUnauthenticated(t *testing.T) {
 	app := newTestApp(t)
 	path := "/api/v1/internal/policies/11111111-2222-3333-4444-555555555555/matchmaking-result"
 
-	t.Run("rejects a missing key", func(t *testing.T) {
-		res, err := app.Test(httptest.NewRequest(fiber.MethodPost, path, nil), 5000)
-		if err != nil {
-			t.Fatalf("dispatch failed: %v", err)
-		}
-		defer res.Body.Close()
-		if res.StatusCode != fiber.StatusUnauthorized {
-			t.Errorf("got status %d, want 401", res.StatusCode)
-		}
-	})
-
-	t.Run("rejects a wrong key", func(t *testing.T) {
-		req := httptest.NewRequest(fiber.MethodPost, path, nil)
-		req.Header.Set("X-Internal-Key", "not-the-key")
-		res, err := app.Test(req, 5000)
-		if err != nil {
-			t.Fatalf("dispatch failed: %v", err)
-		}
-		defer res.Body.Close()
-		if res.StatusCode != fiber.StatusUnauthorized {
-			t.Errorf("got status %d, want 401", res.StatusCode)
-		}
-	})
-}
-
-// TestInternalRoutesOpenWithoutConfiguredKey verifies that leaving
-// INTERNAL_API_KEY unset leaves the callback routes reachable with no
-// X-Internal-Key header at all, for deployments where the backend and AI
-// service exchange no shared secret (e.g. a private network).
-func TestInternalRoutesOpenWithoutConfiguredKey(t *testing.T) {
-	app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler(false)})
-	Register(app, &config.Config{}, Handlers{
-		Health: &handler.HealthHandler{}, Auth: &handler.AuthHandler{},
-		Claim: &handler.ClaimHandler{}, Topic: &handler.TopicHandler{},
-		Policy: &handler.PolicyHandler{}, Alert: &handler.AlertHandler{},
-		Setting: &handler.SettingHandler{}, Admin: &handler.AdminHandler{},
-	}, &service.AuthService{})
-
-	path := "/api/v1/internal/policies/11111111-2222-3333-4444-555555555555/matchmaking-result"
-	// No X-Internal-Key header at all — the request should reach the handler
-	// rather than being rejected by the auth middleware. The handler then
-	// fails on the empty body, which proves the guard let it through.
-	req := httptest.NewRequest(fiber.MethodPost, path, nil)
-
-	res, err := app.Test(req, 5000)
+	// No headers at all. The request should reach the handler, which then fails
+	// on the empty body — that failure is what proves nothing rejected it first.
+	res, err := app.Test(httptest.NewRequest(fiber.MethodPost, path, nil), 5000)
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode == fiber.StatusUnauthorized || res.StatusCode == fiber.StatusForbidden {
-		t.Errorf("got status %d, want the request to pass the auth guard when no key is configured",
+		t.Errorf("got status %d — the AI callback route must not require credentials",
 			res.StatusCode)
 	}
 }

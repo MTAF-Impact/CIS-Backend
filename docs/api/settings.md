@@ -175,3 +175,198 @@ curl -X POST http://localhost:8080/api/v1/admin/snapshot-scores \
 
 Returns `0` when the watchlist is empty — only watched claims are captured, since
 they are the only ones F3 charts.
+
+Note this captures *current* scores; it does not recompute them. The hourly cron
+job calls the AI service's rescore first — see below — so a manual snapshot
+straight after a manual rescore reproduces what the cron does.
+
+---
+
+## POST /api/v1/admin/rescore
+
+Asks the AI service to re-evaluate every Existing claim's score.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/rescore \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**200 OK**
+
+```json
+{ "success": true, "message": "claims rescored", "data": { "claims_rescored": 4 } }
+```
+
+**Why this exists.** A claim's score moves with wall-clock time even when
+nothing new is ingested: NPR drifts as opposing posts age out of the rolling
+window, which changes the discount factor and therefore `final_claim_score`. But
+nothing recomputes that on a schedule — the AI service has no cron of its own,
+and clustering only runs when content arrives. So the backend's hourly snapshot
+job calls this **first** and captures afterwards; without that, the F3 trend
+chart would plot the same number every hour, a horizontal line by construction.
+
+This endpoint is the same trigger, run by hand. It runs on
+`AI_SERVICE_LONG_TIMEOUT`.
+
+**503** when `AI_SERVICE_URL` is unset — every score column belongs to the AI
+service.
+
+---
+
+## POST /api/v1/admin/generate-sample-content
+
+The "Generate sample data" button: populates the databank with fabricated but
+realistic content, run through the same embed → analyze → cluster pipeline real
+crawled content would be.
+
+**Body** (optional)
+
+| Field | Type | Default | Rules |
+|---|---|---|---|
+| `count` | int | `10` | 1–50 |
+| `topic_hint` | string | — | max 255 chars; steers what the content is about |
+| `auto_cluster` | bool | `true` | when true, clustering runs synchronously so the response can report the resulting claim counts |
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/generate-sample-content \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "count": 10, "topic_hint": "road pricing" }'
+```
+
+**201 Created**
+
+```json
+{
+  "success": true,
+  "message": "sample content generated",
+  "data": {
+    "generated_count": 10,
+    "failed_count": 0,
+    "claims_created": 2,
+    "claims_updated": 1,
+    "content_items_clustered": 10,
+    "last_fetched_at": "2026-08-31T09:14:02Z",
+    "message": "generated 10 content items"
+  }
+}
+```
+
+The three `claims_*` / `content_items_clustered` counts are `null` when
+`auto_cluster` was `false`: nothing was clustered, which is different from
+clustering that produced nothing. Like the claim generator, this moves the S1
+"last fetched" timestamp — new content means new claims.
+
+> **Until a live crawler exists, this is the only way content enters the system
+> through the product.** Outside of policy matchmaking's predicted claims and the
+> single demo claim above, nothing else populates `content_items` — and
+> therefore nothing else populates Existing claims.
+>
+> The AI service's plain `/ingest` and `/ingest/batch` endpoints are
+> deliberately **not** proxied. Those are a machine crawler's interface; a
+> crawler should call the AI service directly rather than routing content through
+> a human-facing, JWT-authenticated backend.
+
+Long-running with `auto_cluster` on: it uses `AI_SERVICE_LONG_TIMEOUT`.
+
+**422** when `count` is outside 1–50. **503** when `AI_SERVICE_URL` is unset.
+
+---
+
+## POST /api/v1/admin/cluster-now
+
+Forces a clustering pass over content the AI service has ingested but not yet
+grouped into claims.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/cluster-now \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "clustering pass complete",
+  "data": { "claims_created": 2, "claims_updated": 1, "content_items_clustered": 8 }
+}
+```
+
+Normally unnecessary — ingestion triggers clustering on its own, in the
+background. Useful after an ingest whose background pass has not finished, or to
+force one without waiting.
+
+---
+
+## POST /api/v1/admin/reconcile
+
+Clears backend rows whose AI-side claim or policy no longer exists.
+
+**Body** (optional)
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `dry_run` | bool | `false` | Report what would be cleared without clearing it |
+| `force` | bool | `false` | Override the empty-database guard described below |
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/reconcile \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "dry_run": true }'
+```
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "7 rows would be reconciled",
+  "data": {
+    "dry_run": true,
+    "orphaned_reviews": 2,
+    "orphaned_alerts": 1,
+    "orphaned_score_snapshots": 3,
+    "policies_unlinked": 1,
+    "claims_in_database": 42,
+    "ai_policies_in_database": 5,
+    "message": "7 rows would be reconciled"
+  }
+}
+```
+
+**What it fixes.** Every backend reference into an AI table is a soft one, with
+no foreign key — the backend must never constrain a table it does not own. So
+when the AI side runs a demo reseed or a schema reset (both of which correctly
+leave `cis_*` alone), nothing cascades:
+
+| Left dangling | Symptom |
+|---|---|
+| `cis_claim_reviews.claim_id` | Review decisions for claims that no longer exist |
+| `cis_claim_alerts.claim_id` | F3 lists watchlist rows pointing at nothing |
+| `cis_claim_score_snapshots.claim_id` | History for deleted claims |
+| `cis_policies.ai_policy_id` | F2 shows a "completed" badge above empty claim lists |
+
+The first three are deleted. The fourth is not merely unlinked but **re-queued**
+— `ai_policy_id` is cleared and `processing_status` goes back to `pending`
+(or `skipped` when no AI service is configured), so matchmaking can rebuild the
+correlations.
+
+**The empty-database guard.** If the AI tables are present but empty, every
+backend reference looks orphaned and a full sweep would erase the entire human
+layer — every review decision, every watchlist entry. From here that is
+indistinguishable from being pointed at the wrong database, so the sweep refuses:
+
+```json
+{
+  "success": false,
+  "message": "refusing to reconcile: the AI service's claims table is empty, so every backend review, watchlist entry and snapshot looks orphaned (48 rows). This usually means the backend is pointed at the wrong database. Pass force=true only if the AI data really was wiped deliberately.",
+  "error": { "code": "CONFLICT" }
+}
+```
+
+Check `DATABASE_URL` first. Pass `force: true` only when the AI data really was
+wiped on purpose.
+
+Prefer `dry_run: true` before a real run. Nothing here is recoverable.

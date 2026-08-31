@@ -161,6 +161,33 @@ func (h *ClaimHandler) UpdateStatus(c *fiber.Ctx) error {
 	return response.OK(c, "claim status updated", res)
 }
 
+// ConfirmHarm handles PUT /api/v1/claims/:id/harm/confirm (Flow 4).
+//
+// The body is optional: sending none is the "these sub-scores are right as
+// classified" case, which still records the human confirmation.
+func (h *ClaimHandler) ConfirmHarm(c *fiber.Ctx) error {
+	id, err := parsePathUUID(c, "id")
+	if err != nil {
+		return err
+	}
+
+	var req dto.ConfirmHarmRequest
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return apperr.BadRequest("request body must be valid JSON").Wrap(err)
+		}
+		if err := dto.Validate(req); err != nil {
+			return err
+		}
+	}
+
+	detail, err := h.claims.ConfirmHarm(c.UserContext(), id, req)
+	if err != nil {
+		return err
+	}
+	return response.OK(c, "harm sub-scores confirmed", detail)
+}
+
 // ScoreHistory handles GET /api/v1/claims/:id/score-history.
 func (h *ClaimHandler) ScoreHistory(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")

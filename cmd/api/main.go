@@ -74,10 +74,10 @@ func main() {
 
 	authSvc := service.NewAuthService(userRepo, cfg.Auth)
 	settingSvc := service.NewSettingService(settingRepo)
-	claimSvc := service.NewClaimService(claimRepo, alertRepo, policyRepo, snapshotRepo, settingSvc)
+	claimSvc := service.NewClaimService(claimRepo, alertRepo, policyRepo, snapshotRepo, settingSvc, ai)
 	policySvc := service.NewPolicyService(policyRepo, claimRepo, alertRepo, store, ai, cfg.App)
 	alertSvc := service.NewAlertService(alertRepo, claimRepo, snapshotRepo, settingSvc)
-	adminSvc := service.NewAdminService(ai, settingSvc)
+	adminSvc := service.NewAdminService(ai, settingSvc, policyRepo, claimRepo)
 
 	handlers := router.Handlers{
 		Health:  handler.NewHealthHandler(db, cfg, store, ai),
@@ -109,9 +109,9 @@ func main() {
 	app.Use(middleware.Logger())
 	app.Use(middleware.CORS(cfg.App))
 
-	router.Register(app, cfg, handlers, authSvc)
+	router.Register(app, handlers, authSvc)
 
-	cron := scheduler.New(cfg.Cron, policySvc, alertSvc)
+	cron := scheduler.New(cfg.Cron, policySvc, alertSvc, adminSvc)
 	if err := cron.Start(); err != nil {
 		log.Fatalf("scheduler error: %v", err)
 	}

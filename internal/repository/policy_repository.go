@@ -187,10 +187,33 @@ func (r *PolicyRepository) MarkRolledOut(ctx context.Context, ids []uuid.UUID) (
 
 // FindPendingMatchmaking returns policies whose AI matchmaking has not yet
 // completed, used to retry stuck jobs.
-func (r *PolicyRepository) FindPendingMatchmaking(ctx context.Context, maxAttempts int, limit int) ([]models.CISPolicy, error) {
+//
+// Three states qualify:
+//
+//   - pending — queued but never handed off (the process died between the
+//     insert and the background goroutine, say).
+//   - failed — the hand-off itself errored.
+//   - processing, but not touched since staleBefore — the AI service acked and
+//     the Flow 2 callback never arrived. This one is the important case:
+//     "processing" is otherwise a terminal state on the backend side, because
+//     only the callback moves it, and the AI service never retries a callback.
+//
+// updated_at is maintained by Update, which every step of the matchmaking
+// lifecycle goes through, so it is an accurate "last progress" marker.
+func (r *PolicyRepository) FindPendingMatchmaking(
+	ctx context.Context,
+	maxAttempts int,
+	limit int,
+	staleBefore time.Time,
+) ([]models.CISPolicy, error) {
 	var policies []models.CISPolicy
 	err := r.db.WithContext(ctx).
-		Where("processing_status IN ?", []string{models.ProcessingPending, models.ProcessingFailed}).
+		Where(
+			"(processing_status IN ? OR (processing_status = ? AND updated_at < ?))",
+			[]string{models.ProcessingPending, models.ProcessingFailed},
+			models.ProcessingInProgress,
+			staleBefore,
+		).
 		Where("processing_attempts < ?", maxAttempts).
 		Order("created_at ASC").
 		Limit(limit).
@@ -232,4 +255,48 @@ func (r *PolicyRepository) FindByAIPolicyID(ctx context.Context, id uuid.UUID) (
 		return nil, err
 	}
 	return &policy, nil
+}
+
+// CountAIPolicies returns the total number of rows in the AI service's
+// `policies` table, used as context for a reconciliation sweep.
+func (r *PolicyRepository) CountAIPolicies(ctx context.Context) (int64, error) {
+	var total int64
+	err := r.db.WithContext(ctx).Table("policies").Count(&total).Error
+	return total, err
+}
+
+// danglingAIPolicyLink matches a cis_policies row whose ai_policy_id points at
+// a policy the AI service no longer has. There is no foreign key to cascade —
+// ai_policy_id is deliberately a soft reference — so these survive an AI-side
+// reset and leave the F2 detail page showing a completed badge above empty
+// claim lists.
+const danglingAIPolicyLink = `ai_policy_id IS NOT NULL AND NOT EXISTS (
+	SELECT 1 FROM policies p WHERE p.id = cis_policies.ai_policy_id
+)`
+
+// CountDanglingAIPolicyLinks reports how many policies lost their AI record.
+func (r *PolicyRepository) CountDanglingAIPolicyLinks(ctx context.Context) (int64, error) {
+	var total int64
+	err := r.db.WithContext(ctx).
+		Model(&models.CISPolicy{}).
+		Where(danglingAIPolicyLink).
+		Count(&total).Error
+	return total, err
+}
+
+// ClearDanglingAIPolicyLinks drops the broken link and re-queues matchmaking, so
+// the correlations can be rebuilt rather than staying permanently empty behind a
+// "completed" badge.
+func (r *PolicyRepository) ClearDanglingAIPolicyLinks(ctx context.Context, requeueStatus string) error {
+	return r.db.WithContext(ctx).
+		Model(&models.CISPolicy{}).
+		Where(danglingAIPolicyLink).
+		Updates(map[string]any{
+			"ai_policy_id":        nil,
+			"processing_status":   requeueStatus,
+			"processing_attempts": 0,
+			"processing_error":    nil,
+			"processed_at":        nil,
+			"updated_at":          time.Now().UTC(),
+		}).Error
 }

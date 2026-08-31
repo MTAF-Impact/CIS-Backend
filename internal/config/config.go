@@ -19,13 +19,12 @@ import (
 
 // Config is the fully resolved application configuration.
 type Config struct {
-	App      AppConfig
-	DB       DBConfig
-	Auth     AuthConfig
-	Storage  StorageConfig
-	AI       AIConfig
-	Internal InternalConfig
-	Cron     CronConfig
+	App     AppConfig
+	DB      DBConfig
+	Auth    AuthConfig
+	Storage StorageConfig
+	AI      AIConfig
+	Cron    CronConfig
 }
 
 // UnlimitedBodyLimit is the request-body cap applied when
@@ -121,25 +120,50 @@ type AIConfig struct {
 	// matchmaking is left pending and the F4 generator returns 503.
 	BaseURL string
 	APIKey  string
-	Timeout time.Duration
 
-	MatchmakingPath   string
-	GenerateClaimPath string
+	// Timeout bounds the fast calls: Flow 1's matchmaking hand-off (the AI
+	// service acks in milliseconds and works in the background) and the
+	// readiness probe.
+	Timeout time.Duration
+	// LongTimeout bounds the calls that do real work inside the request:
+	// Flow 3's claim generation, synthetic ingestion, clustering, and
+	// rescoring. The AI service documents Flow 3 alone at 30-60s of sequential
+	// LLM calls, so reusing Timeout here would fail a normal successful run
+	// while the AI service kept going and committed the claim anyway.
+	LongTimeout time.Duration
+
+	// MatchmakingStaleAfter is how long a policy may sit in
+	// processing_status="processing" before the retry sweep assumes the Flow 2
+	// callback was lost and re-queues it. The AI service never retries its
+	// callback, so this is the only place a dropped result is recovered.
+	MatchmakingStaleAfter time.Duration
+
+	// The AI service's route table is deliberately NOT here. Those paths are
+	// part of the contract between the two services rather than properties of
+	// this deployment, and they live as constants in
+	// internal/aiclient/endpoints.go alongside the request and response types
+	// they belong to.
+
+	// CallbackBaseURL is this backend's externally reachable base URL, sent to
+	// the AI service as `callback_url` on Flow 1. Optional: when empty the
+	// field is omitted and the AI service falls back to its own BACKEND_URL.
+	CallbackBaseURL string
 }
 
 // Enabled reports whether outbound AI calls are configured.
 func (a AIConfig) Enabled() bool { return a.BaseURL != "" }
 
-// InternalConfig guards the machine-to-machine callback routes.
-type InternalConfig struct {
-	APIKey string
-}
-
 // CronConfig controls the background jobs.
 type CronConfig struct {
 	Enabled           bool
 	PolicyRolloutSpec string // US41: flip Not Rolled Out -> Rolled Out
-	ScoreSnapshotSpec string // F3 chart history
+	ScoreSnapshotSpec string // F3 chart history, preceded by an AI rescore
+	// MatchmakingRetrySpec re-queues matchmaking jobs that failed or whose
+	// Flow 2 callback never arrived. It runs on its own, much more frequent
+	// schedule than the daily rollout job: a policy stranded on "Processing"
+	// shows a spinning badge and empty claim lists until it is re-queued, so
+	// waiting until the next day to notice is not acceptable.
+	MatchmakingRetrySpec string
 }
 
 // Load reads the environment (optionally seeded from a .env file) into a Config.
@@ -192,19 +216,18 @@ func Load() (*Config, error) {
 			LocalDir:           getEnv("STORAGE_LOCAL_DIR", "./uploads"),
 		},
 		AI: AIConfig{
-			BaseURL:           strings.TrimRight(getEnv("AI_SERVICE_URL", ""), "/"),
-			APIKey:            getEnv("AI_SERVICE_API_KEY", ""),
-			Timeout:           getEnvDuration("AI_SERVICE_TIMEOUT", 30*time.Second),
-			MatchmakingPath:   getEnv("AI_SERVICE_MATCHMAKING_PATH", "/api/v1/matchmaking/policies"),
-			GenerateClaimPath: getEnv("AI_SERVICE_GENERATE_CLAIM_PATH", "/api/v1/claims/generate-generic"),
-		},
-		Internal: InternalConfig{
-			APIKey: getEnv("INTERNAL_API_KEY", ""),
+			BaseURL:               strings.TrimRight(getEnv("AI_SERVICE_URL", ""), "/"),
+			APIKey:                getEnv("AI_SERVICE_API_KEY", ""),
+			Timeout:               getEnvDuration("AI_SERVICE_TIMEOUT", 30*time.Second),
+			LongTimeout:           getEnvDuration("AI_SERVICE_LONG_TIMEOUT", 180*time.Second),
+			MatchmakingStaleAfter: getEnvDuration("AI_MATCHMAKING_STALE_AFTER", 30*time.Minute),
+			CallbackBaseURL:       strings.TrimRight(getEnv("BACKEND_PUBLIC_URL", ""), "/"),
 		},
 		Cron: CronConfig{
-			Enabled:           getEnvBool("CRON_ENABLED", true),
-			PolicyRolloutSpec: getEnv("CRON_POLICY_ROLLOUT_SPEC", "0 1 * * *"),
-			ScoreSnapshotSpec: getEnv("CRON_SCORE_SNAPSHOT_SPEC", "0 * * * *"),
+			Enabled:              getEnvBool("CRON_ENABLED", true),
+			PolicyRolloutSpec:    getEnv("CRON_POLICY_ROLLOUT_SPEC", "0 1 * * *"),
+			ScoreSnapshotSpec:    getEnv("CRON_SCORE_SNAPSHOT_SPEC", "0 * * * *"),
+			MatchmakingRetrySpec: getEnv("CRON_MATCHMAKING_RETRY_SPEC", "*/15 * * * *"),
 		},
 	}
 

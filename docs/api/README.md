@@ -75,7 +75,7 @@ Validation failures add per-field `details`:
 |---|---|---|
 | 400 | `BAD_REQUEST` | Malformed input — bad UUID, unparseable body, invalid query value. |
 | 400 | `VALIDATION_FAILED` | Body failed field validation. See `error.details`. |
-| 401 | `UNAUTHORIZED` | Missing, malformed, or expired token / internal key. |
+| 401 | `UNAUTHORIZED` | Missing, malformed, or expired access token. |
 | 403 | `FORBIDDEN` | Registration disabled, or internal routes not configured. |
 | 404 | `NOT_FOUND` | Resource does not exist. |
 | 409 | `CONFLICT` | Email already taken, matchmaking already running. |
@@ -96,8 +96,8 @@ Authorization: Bearer <access_token>
 There are **no roles**: any authenticated user may call every endpoint,
 including the F4 admin settings.
 
-The `/api/v1/internal/*` routes use a shared secret instead — see
-[internal.md](internal.md).
+The `/api/v1/internal/*` routes are machine-to-machine callbacks from the AI
+service and do not take an operator Bearer token; see [internal.md](internal.md).
 
 ## Pagination
 

@@ -173,7 +173,12 @@ curl http://localhost:8080/api/v1/claims/c0000000-0000-0000-0000-000000000001 \
       "type": "debunk",
       "content": "Fact: the congestion charge is a published, debated policy.",
       "generated_at": "2026-08-30T14:32:45Z",
-      "available": true
+      "available": true,
+      "debunk": {
+        "core_fact": "The congestion charge is a published policy, debated in council and costed in public.",
+        "nuanced_flag": "A claim is circulating that misrepresents how the charge is funded.",
+        "reiterated_fact": "The charge and its revenue allocation are set out in the published policy document."
+      }
     },
     "policies": [
       {
@@ -274,6 +279,74 @@ is `"prebunk"`.
 > `activity` is served from the AI service's cache (`claims.activity_content`).
 > Viewing a claim **never** triggers a new AI generation, per US12/US20.
 
+### `activity.debunk` — the Truth Sandwich
+
+The AI service writes the debunk twice: flat in `activity_content`, and split
+into three labelled blocks. `content` stays the copyable single paragraph;
+`debunk` is the same material as three sections the UI can label and lay out.
+
+| Field | Block |
+|---|---|
+| `core_fact` | The true, verified fact — stated first |
+| `nuanced_flag` | A brief, neutral note that a false claim is circulating, without repeating its specific wording |
+| `reiterated_fact` | The fact restated in different words |
+
+`debunk` is **omitted entirely** when the AI service has written none of the
+three, which is the case for every Synthetic claim (their prebunk is flat) and
+for any Existing claim generated before the split existed. An individual block
+can be `null` when only some were written.
+
+---
+
+## PUT /api/v1/claims/:id/harm/confirm
+
+An analyst confirms or overrides the AI's four Harm sub-scores (PRD 6.2.4).
+**Existing claims only.**
+
+The backend cannot apply this itself — `harm_*`, `harm_human_confirmed` and every
+score derived from them are columns on the AI-owned `claims` table — so the
+request is proxied to the AI service, which recomputes
+`harm_score → claim_score → final_claim_score` and appends a score snapshot. The
+claim is then re-read from the database, so the response is the same full detail
+payload `GET /claims/:id` returns.
+
+Every field is optional and on a 0–100 scale. An omitted field keeps the AI's
+own classification; **an empty body is valid** and is the "I reviewed these and
+they are right" case, which still flips `harm_breakdown.human_confirmed` to
+`true`.
+
+```bash
+curl -X PUT "http://localhost:8080/api/v1/claims/$ID/harm/confirm" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "public_safety": 90, "economic": 55 }'
+```
+
+**200 OK** — the full `ClaimDetail`, with
+
+```json
+{
+  "score_breakdown": {
+    "harm_breakdown": {
+      "public_safety": 90,
+      "institutional_trust": 78,
+      "economic": 55,
+      "policy_disruption": 65,
+      "human_confirmed": true
+    }
+  }
+}
+```
+
+| Status | When |
+|---|---|
+| `404` | Unknown claim |
+| `422` | The claim is Synthetic — it carries no scores to confirm — or a sub-score is outside 0–100 |
+| `503` | `AI_SERVICE_URL` is unset, or the AI service could not apply the change |
+
+This call runs on `AI_SERVICE_LONG_TIMEOUT`: the AI service rescores the claim
+before replying.
+
 ---
 
 ## GET /api/v1/claims/:id/statements
@@ -362,6 +435,16 @@ for Synthetic claims (US20).
 ---
 
 ## GET /api/v1/claims/:id/score-history
+
+> **Two sources, merged.** Points come from the backend's own hourly snapshots
+> (`cis_claim_score_snapshots`, captured for watched claims only) **and** from
+> the AI service's `claim_score_snapshots`, which it appends every time it
+> rescores any claim. A claim that was never bell-icon'd would otherwise return
+> an empty series. Values are averaged per bucket across both sources, weighted
+> by the number of underlying rows. `claim_score` comes only from backend
+> snapshots — the AI table records the final score alone — so it can be `null`
+> in a bucket where `final_claim_score` is not.
+
 
 `final_claim_score` over time, from the backend-owned snapshot table.
 

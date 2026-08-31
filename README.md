@@ -121,6 +121,11 @@ Minimum to boot:
 | `JWT_SECRET` | Signing key (32+ chars required in production) |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Policy document storage |
 
-Optional: `AI_SERVICE_URL` and `INTERNAL_API_KEY`. Without them the backend runs
-normally — policy matchmaking records `skipped` and the F4 claim generator
-returns `503`.
+Optional: `AI_SERVICE_URL` and `BACKEND_PUBLIC_URL`. Without the first the
+backend runs normally — policy matchmaking records `skipped`, and every `/admin`
+endpoint that proxies onto the AI service returns `503`.
+
+The AI service needs `BACKEND_URL` pointed back here, or its Flow 2 callbacks
+never arrive. See [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md) for the whole
+contract and [docs/SETUP.md](docs/SETUP.md#the-ai-services-side-of-the-deployment)
+for the deployment checklist.

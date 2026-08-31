@@ -235,7 +235,8 @@ func (s *PolicyService) Create(ctx context.Context, in CreatePolicyInput) (*dto.
 	}
 
 	if s.ai.Enabled() {
-		s.startMatchmaking(policy.ID)
+		// A brand-new policy the AI service has never seen: nothing to force.
+		s.startMatchmaking(policy.ID, false)
 	}
 
 	row, err := s.policies.FindByID(ctx, policy.ID)
@@ -250,19 +251,23 @@ func (s *PolicyService) Create(ctx context.Context, in CreatePolicyInput) (*dto.
 //
 // The upload response must not block on the AI service, which is exactly why
 // the card shows a "Processing" badge until this finishes.
-func (s *PolicyService) startMatchmaking(policyID uuid.UUID) {
+//
+// force is passed through to the AI service, which otherwise short-circuits a
+// repeat submission for a policy it already knows and re-reports the previous
+// run's counts. See MatchmakingRequest.Force.
+func (s *PolicyService) startMatchmaking(policyID uuid.UUID, force bool) {
 	go func() {
 		// A fresh context: the HTTP request that triggered this is already done.
 		ctx, cancel := context.WithTimeout(context.Background(), s.ai.Timeout()+30*time.Second)
 		defer cancel()
 
-		if err := s.runMatchmaking(ctx, policyID); err != nil {
+		if err := s.runMatchmaking(ctx, policyID, force); err != nil {
 			log.Printf("[policy] matchmaking failed for %s: %v", policyID, err)
 		}
 	}()
 }
 
-func (s *PolicyService) runMatchmaking(ctx context.Context, policyID uuid.UUID) error {
+func (s *PolicyService) runMatchmaking(ctx context.Context, policyID uuid.UUID, force bool) error {
 	row, err := s.policies.FindByID(ctx, policyID)
 	if err != nil {
 		return fmt.Errorf("load policy: %w", err)
@@ -292,6 +297,8 @@ func (s *PolicyService) runMatchmaking(ctx context.Context, policyID uuid.UUID) 
 		FileName:      row.FileName,
 		FileMimeType:  row.FileMimeType,
 		DocumentURL:   documentURL,
+		Force:         force,
+		CallbackURL:   s.ai.CallbackURL(row.ID),
 	})
 	if err != nil {
 		message := err.Error()
@@ -351,7 +358,9 @@ func (s *PolicyService) Rematch(ctx context.Context, id uuid.UUID) (*dto.PolicyP
 		return nil, apperr.Internal("could not queue matchmaking").Wrap(err)
 	}
 
-	s.startMatchmaking(id)
+	// An operator pressing Rematch wants the pipeline actually re-run, not the
+	// previous run's counts read back to them.
+	s.startMatchmaking(id, true)
 	return s.ProcessingStatus(ctx, id)
 }
 
@@ -524,7 +533,10 @@ func (s *PolicyService) ReplaceFile(ctx context.Context, id uuid.UUID, in Replac
 	}
 
 	if s.ai.Enabled() {
-		s.startMatchmaking(id)
+		// The document behind the correlations just changed, so the AI service
+		// must read the new one rather than re-report matches derived from the
+		// superseded file.
+		s.startMatchmaking(id, true)
 	}
 
 	updated, err := s.policies.FindByID(ctx, id)
@@ -622,17 +634,34 @@ func (s *PolicyService) RefreshRolloutStatuses(ctx context.Context) (int64, erro
 }
 
 // RetryStuckMatchmaking re-queues policies whose matchmaking never completed.
+//
+// Two failure shapes are picked up. A job that failed outright leaves
+// processing_status="failed" and is obviously retryable. The harder one is a
+// lost Flow 2 callback: the AI service acked, the backend recorded
+// "processing", and the result never arrived — the AI service's callback is
+// best-effort and it never retries. Without a staleness sweep such a policy
+// sits at "processing" with a null ai_policy_id forever, spinning its badge and
+// showing empty claim lists. So anything that has been "processing" longer than
+// AI_MATCHMAKING_STALE_AFTER is re-queued too.
+//
+// runMatchmaking bumps processing_attempts the moment it starts, which both
+// bounds this loop through maxMatchmakingAttempts and stops the next sweep from
+// picking up a policy this one has already re-queued.
+//
+// force is deliberately not set: a run that genuinely succeeded and only lost
+// its callback should be cheap for the AI service to re-report.
 func (s *PolicyService) RetryStuckMatchmaking(ctx context.Context) (int, error) {
 	if !s.ai.Enabled() {
 		return 0, nil
 	}
 
-	stuck, err := s.policies.FindPendingMatchmaking(ctx, maxMatchmakingAttempts, 20)
+	staleBefore := time.Now().UTC().Add(-s.ai.MatchmakingStaleAfter())
+	stuck, err := s.policies.FindPendingMatchmaking(ctx, maxMatchmakingAttempts, 20, staleBefore)
 	if err != nil {
 		return 0, apperr.Internal("could not find pending matchmaking jobs").Wrap(err)
 	}
 	for _, policy := range stuck {
-		s.startMatchmaking(policy.ID)
+		s.startMatchmaking(policy.ID, false)
 	}
 	return len(stuck), nil
 }

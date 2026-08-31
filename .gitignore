@@ -43,3 +43,5 @@ uploads/
 # Editor/IDE
 # .idea/
 # .vscode/
+
+/docs/local_docs

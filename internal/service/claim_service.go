@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cis/cis-backend/internal/aiclient"
 	"github.com/cis/cis-backend/internal/dto"
 	"github.com/cis/cis-backend/internal/models"
 	"github.com/cis/cis-backend/internal/pkg/apperr"
@@ -23,12 +24,17 @@ const TopAccountLimit = 5
 const SectionSize = 10
 
 // ClaimService assembles the F1 Claim Repository Bank payloads.
+//
+// It holds an AI client for exactly one reason: harm confirmation (Flow 4)
+// writes claims.harm_* columns, which this backend never writes itself. Every
+// other field on this page is a plain database read.
 type ClaimService struct {
 	claims    *repository.ClaimRepository
 	alerts    *repository.AlertRepository
 	policies  *repository.PolicyRepository
 	snapshots *repository.SnapshotRepository
 	settings  *SettingService
+	ai        *aiclient.Client
 }
 
 // NewClaimService constructs a ClaimService.
@@ -38,8 +44,16 @@ func NewClaimService(
 	policies *repository.PolicyRepository,
 	snapshots *repository.SnapshotRepository,
 	settings *SettingService,
+	ai *aiclient.Client,
 ) *ClaimService {
-	return &ClaimService{claims: claims, alerts: alerts, policies: policies, snapshots: snapshots, settings: settings}
+	return &ClaimService{
+		claims:    claims,
+		alerts:    alerts,
+		policies:  policies,
+		snapshots: snapshots,
+		settings:  settings,
+		ai:        ai,
+	}
 }
 
 // ListClaimsQuery is the normalized input for the "See all" list (US8, US17).
@@ -262,7 +276,7 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 		ReviewStatus:   row.ReviewStatus,
 		CreatedAt:      row.CreatedAt,
 		UpdatedAt:      row.UpdatedAt,
-		Activity:       buildActivity(claimType, row.ActivityContent, row.ActivityGeneratedAt),
+		Activity:       buildActivity(claimType, row.AIClaim),
 	}
 	if row.TopicName != nil {
 		detail.Topic = &dto.TopicRef{ID: row.TopicID.String(), Name: *row.TopicName}
@@ -318,19 +332,36 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 
 // buildActivity wraps the cached AI draft. US12/US20 require this to be served
 // from cache — the backend must never trigger a new generation on view.
-func buildActivity(claimType string, content *string, generatedAt *time.Time) dto.ActivityContent {
+//
+// The AI service writes the Debunk twice: once flat, in activity_content, and
+// once split into the Truth Sandwich's three blocks. Both are returned, because
+// the flat version is what an operator copies and the split version is what the
+// detail page labels and lays out.
+func buildActivity(claimType string, claim models.AIClaim) dto.ActivityContent {
 	// Existing claims get corrective Debunk content; Synthetic claims get
 	// pre-emptive Prebunk content.
 	activityType := "debunk"
 	if claimType == models.ClaimTypeNonExisting {
 		activityType = "prebunk"
 	}
-	return dto.ActivityContent{
+
+	activity := dto.ActivityContent{
 		Type:        activityType,
-		Content:     content,
-		GeneratedAt: generatedAt,
-		Available:   content != nil && *content != "",
+		Content:     claim.ActivityContent,
+		GeneratedAt: claim.ActivityGeneratedAt,
+		Available:   claim.ActivityContent != nil && *claim.ActivityContent != "",
 	}
+
+	// Omitted rather than sent as three nulls, so the frontend can branch on
+	// presence instead of inspecting each block.
+	if claim.DebunkCoreFact != nil || claim.DebunkNuancedFlag != nil || claim.DebunkReiteratedFact != nil {
+		activity.Debunk = &dto.DebunkBlocks{
+			CoreFact:       claim.DebunkCoreFact,
+			NuancedFlag:    claim.DebunkNuancedFlag,
+			ReiteratedFact: claim.DebunkReiteratedFact,
+		}
+	}
+	return activity
 }
 
 // buildBreakdown assembles the US23 Score Transparency payload.
@@ -549,6 +580,54 @@ func (s *ClaimService) UpdateStatus(ctx context.Context, claimID uuid.UUID, req 
 		res.ReviewedBy = &id
 	}
 	return res, nil
+}
+
+// ConfirmHarm records a reviewer's confirmation of a claim's Harm sub-scores
+// (Flow 4, PRD 6.2.4).
+//
+// This is the one claim mutation the backend cannot perform itself: the four
+// harm_* columns, harm_human_confirmed, and every score derived from them live
+// on the AI-owned `claims` table. So the request is proxied to the AI service,
+// which applies the overrides and recomputes harm_score -> claim_score ->
+// final_claim_score, and the claim is then re-read from the database so the
+// response is built from the same source as every other claim read.
+//
+// Synthetic claims are rejected before the call: they carry no scores at all
+// (US18), so there is nothing to confirm.
+func (s *ClaimService) ConfirmHarm(ctx context.Context, claimID uuid.UUID, req dto.ConfirmHarmRequest) (*dto.ClaimDetail, error) {
+	if !s.ai.Enabled() {
+		return nil, apperr.Unavailable(
+			"confirming harm sub-scores requires the AI service, because the claims table is owned and " +
+				"written exclusively by it. Set AI_SERVICE_URL to enable this action.")
+	}
+
+	exists, rawType, err := s.claims.ClaimExists(ctx, claimID)
+	if err != nil {
+		return nil, apperr.Internal("could not verify claim").Wrap(err)
+	}
+	if !exists {
+		return nil, apperr.NotFound("claim not found")
+	}
+	if models.NormalizeClaimType(rawType) != models.ClaimTypeExisting {
+		return nil, apperr.Unprocessable(
+			"only Existing (Generic) claims carry harm sub-scores; " +
+				"Non-Existing (Synthetic) claims are unscored predictions")
+	}
+
+	err = s.ai.ConfirmHarm(ctx, claimID, aiclient.HarmConfirmRequest{
+		PublicSafety:       req.PublicSafety,
+		InstitutionalTrust: req.InstitutionalTrust,
+		Economic:           req.Economic,
+		PolicyDisruption:   req.PolicyDisruption,
+	})
+	if err != nil {
+		if errors.Is(err, aiclient.ErrNotConfigured) {
+			return nil, apperr.Unavailable("the AI service is not configured")
+		}
+		return nil, apperr.Unavailable("the AI service could not record the harm confirmation: %s", err.Error())
+	}
+
+	return s.Detail(ctx, claimID)
 }
 
 // ScoreHistory returns a claim's FinalClaimScore over time, from the

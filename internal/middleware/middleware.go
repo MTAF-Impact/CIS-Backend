@@ -1,10 +1,10 @@
 // Package middleware holds the Fiber middleware chain: error translation,
-// logging, recovery, CORS, and the two authentication schemes (operator JWT and
-// the internal machine-to-machine API key).
+// logging, recovery, CORS, and the operator JWT guard.
+//
+// There is deliberately no guard on /api/v1/internal/*. See router.go.
 package middleware
 
 import (
-	"crypto/subtle"
 	"errors"
 	"log"
 	"strings"
@@ -97,7 +97,7 @@ func CORS(cfg config.AppConfig) fiber.Handler {
 			fiber.MethodGet, fiber.MethodPost, fiber.MethodPut,
 			fiber.MethodPatch, fiber.MethodDelete, fiber.MethodOptions,
 		}, ","),
-		AllowHeaders: "Origin,Content-Type,Accept,Authorization,X-Internal-Key,X-Request-ID",
+		AllowHeaders: "Origin,Content-Type,Accept,Authorization,X-Request-ID",
 		// Credentials cannot be combined with a wildcard origin; enable them
 		// only when an explicit allowlist is configured.
 		AllowCredentials: origins != "*",
@@ -132,29 +132,6 @@ func RequireAuth(auth *service.AuthService) fiber.Handler {
 		c.Locals(CtxUserID, userID)
 		c.Locals(CtxUserEmail, claims.Email)
 		c.Locals(CtxUserName, claims.Name)
-		return c.Next()
-	}
-}
-
-// RequireInternalKey guards the routes the AI service calls back on.
-//
-// When INTERNAL_API_KEY is unset, no shared secret was exchanged and the
-// routes are left open — callers are expected to be reachable only from a
-// private network in that case. Set INTERNAL_API_KEY on both sides to require
-// and validate the X-Internal-Key header instead.
-func RequireInternalKey(cfg config.InternalConfig) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		if cfg.APIKey == "" {
-			return c.Next()
-		}
-
-		presented := c.Get("X-Internal-Key")
-		if presented == "" {
-			return apperr.Unauthorized("X-Internal-Key header is required")
-		}
-		if subtle.ConstantTimeCompare([]byte(presented), []byte(cfg.APIKey)) != 1 {
-			return apperr.Unauthorized("invalid internal API key")
-		}
 		return c.Next()
 	}
 }

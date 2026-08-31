@@ -96,6 +96,18 @@ type AccountRef struct {
 	TotalImpressions int64  `json:"total_impressions"`
 }
 
+// DebunkBlocks is the Truth Sandwich, split into the three labelled sections
+// the AI service writes alongside the flat `activity_content` paragraph.
+//
+// Existing/Generic claims only. Absent when the AI service has written none of
+// the three, which is the case for every Synthetic claim and for any Existing
+// claim generated before the split existed.
+type DebunkBlocks struct {
+	CoreFact       *string `json:"core_fact"`
+	NuancedFlag    *string `json:"nuanced_flag"`
+	ReiteratedFact *string `json:"reiterated_fact"`
+}
+
 // ActivityContent is the cached AI-generated Debunk or Prebunk draft
 // (US12, US20). It is generated once by the AI service and served from cache;
 // viewing a claim never triggers a new generation.
@@ -104,6 +116,10 @@ type ActivityContent struct {
 	Content     *string    `json:"content"`
 	GeneratedAt *time.Time `json:"generated_at"`
 	Available   bool       `json:"available"`
+	// Debunk carries the same content pre-split into three blocks, for a
+	// frontend that renders them as distinct labelled sections rather than one
+	// paragraph. `content` remains the copyable single block.
+	Debunk *DebunkBlocks `json:"debunk,omitempty"`
 }
 
 // ClaimReview is the reviewer's latest note on a claim's status, read back on
@@ -190,6 +206,19 @@ type ClaimStatusResponse struct {
 	Notes        *string   `json:"notes"`
 	ReviewedAt   time.Time `json:"reviewed_at"`
 	ReviewedBy   *string   `json:"reviewed_by"`
+}
+
+// ConfirmHarmRequest is the body of PUT /api/v1/claims/:id/harm/confirm
+// (Flow 4).
+//
+// Every field is optional: an omitted sub-score keeps the AI service's own
+// classification, and an empty body is the legitimate "I reviewed these and
+// they are right" case, which still flips harm_human_confirmed.
+type ConfirmHarmRequest struct {
+	PublicSafety       *float64 `json:"public_safety" validate:"omitempty,gte=0,lte=100"`
+	InstitutionalTrust *float64 `json:"institutional_trust" validate:"omitempty,gte=0,lte=100"`
+	Economic           *float64 `json:"economic" validate:"omitempty,gte=0,lte=100"`
+	PolicyDisruption   *float64 `json:"policy_disruption" validate:"omitempty,gte=0,lte=100"`
 }
 
 // ScorePoint is one bucket of the F3 score history chart.

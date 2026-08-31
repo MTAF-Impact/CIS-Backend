@@ -7,7 +7,6 @@ package router
 import (
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/cis/cis-backend/internal/config"
 	"github.com/cis/cis-backend/internal/handler"
 	"github.com/cis/cis-backend/internal/middleware"
 	"github.com/cis/cis-backend/internal/service"
@@ -26,7 +25,7 @@ type Handlers struct {
 }
 
 // Register mounts all routes on the app.
-func Register(app *fiber.App, cfg *config.Config, h Handlers, auth *service.AuthService) {
+func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	// --- Public: probes ---
 	app.Get("/health", h.Health.Live)
 	app.Get("/health/ready", h.Health.Ready)
@@ -45,8 +44,22 @@ func Register(app *fiber.App, cfg *config.Config, h Handlers, auth *service.Auth
 	authGroup.Get("/me", authed, h.Auth.Me)
 	authGroup.Post("/logout", authed, h.Auth.Logout)
 
-	// --- Internal: AI service callbacks, guarded by X-Internal-Key ---
-	internal := v1.Group("/internal", middleware.RequireInternalKey(cfg.Internal))
+	// --- Internal: AI service callbacks ---
+	//
+	// DELIBERATELY UNAUTHENTICATED. There is no shared secret between the two
+	// services: the AI service reaches the backend over a private network, and
+	// adding a key that both sides default to empty bought a checkbox rather
+	// than a guarantee.
+	//
+	// The consequence is a deployment constraint, not a code one: /api/v1/internal/*
+	// must never be routed from the public internet. Anyone who can reach it can
+	// post a matchmaking result for any policy id — which sets ai_policy_id, the
+	// join key the whole policy-to-claim correlation hangs off. Block the prefix
+	// at the ingress, or bind these routes to an internal listener.
+	//
+	// To reintroduce auth: a guard on this one group is all it takes. See
+	// docs/api/internal.md.
+	internal := v1.Group("/internal")
 	internal.Post("/policies/:id/matchmaking-result", h.Policy.MatchmakingResult)
 
 	// Topics — the filter chips shared by S1 and S2 (US6, US15).
@@ -65,6 +78,9 @@ func Register(app *fiber.App, cfg *config.Config, h Handlers, auth *service.Auth
 	claims.Get("/:id/policies", h.Claim.Policies)
 	claims.Get("/:id/score-history", h.Claim.ScoreHistory)
 	claims.Put("/:id/status", h.Claim.UpdateStatus)
+	// Flow 4: the one claim mutation that has to travel through the AI service,
+	// because it writes AI-owned score columns.
+	claims.Put("/:id/harm/confirm", h.Claim.ConfirmHarm)
 
 	// F2 — Public Policy Bank.
 	policies := v1.Group("/policies", authed)
@@ -96,4 +112,11 @@ func Register(app *fiber.App, cfg *config.Config, h Handlers, auth *service.Auth
 	admin := v1.Group("/admin", authed)
 	admin.Post("/generate-generic-claim", h.Admin.GenerateGenericClaim)
 	admin.Post("/snapshot-scores", h.Admin.SnapshotScores)
+	// Proxies onto AI-owned capabilities. The frontend can only reach this
+	// backend, so without these the AI service's ingestion, clustering and
+	// rescoring endpoints are unreachable from the product.
+	admin.Post("/generate-sample-content", h.Admin.GenerateSampleContent)
+	admin.Post("/cluster-now", h.Admin.ClusterNow)
+	admin.Post("/rescore", h.Admin.Rescore)
+	admin.Post("/reconcile", h.Admin.Reconcile)
 }

@@ -82,7 +82,9 @@ SEED_USER_NAME=CIS Admin
 
 # Optional — leave empty to run without the AI service
 AI_SERVICE_URL=
-INTERNAL_API_KEY=
+# Optional — this backend's public base URL, sent to the AI service as the
+# Flow 2 callback target
+BACKEND_PUBLIC_URL=
 ```
 
 `.env` is gitignored. **Never commit it.**
@@ -225,7 +227,6 @@ AUTH_ALLOW_REGISTRATION=false
 CORS_ALLOWED_ORIGINS=https://cis.yourcity.go.id
 STORAGE_DRIVER=supabase
 DB_LOG_LEVEL=error
-INTERNAL_API_KEY=<strong random secret>
 ```
 
 - `APP_ENV=production` stops internal error details being returned to clients.
@@ -233,8 +234,47 @@ INTERNAL_API_KEY=<strong random secret>
 - Point liveness at `/health` and readiness at `/health/ready`. `/health` does
   no dependency checks, so a database blip will not restart a healthy container.
 - Run **one** instance with `CRON_ENABLED=true`. If you scale out, set
-  `CRON_ENABLED=false` on the others so the rollout and snapshot jobs do not run
-  concurrently.
+  `CRON_ENABLED=false` on the others so the rollout, snapshot/rescore and
+  matchmaking-retry jobs do not run concurrently.
+- Set `BACKEND_PUBLIC_URL` to this backend's externally reachable base URL. It
+  is sent to the AI service as `callback_url` on Flow 1, so one AI deployment
+  can serve staging and production without either knowing the other exists.
+
+### ⚠️ Keep `/api/v1/internal/*` on the internal network
+
+The `/api/v1/internal/` routes are machine-to-machine callbacks from the AI
+service, not part of the operator-facing API. Serve them only to the AI service:
+restrict the prefix at the load balancer or reverse proxy so it is reachable
+only from the AI service's address. nginx, for example:
+
+```nginx
+location /api/v1/internal/ {
+    allow 10.0.3.0/24;   # the AI service's subnet
+    deny  all;
+    proxy_pass http://cis-backend;
+}
+```
+
+Verify after deploying: the route must answer from inside the network and time
+out or 403 from outside. See [api/internal.md](api/internal.md).
+
+### The AI service's side of the deployment
+
+Two variables live on the **AI service**, not here, and both are unset by
+default:
+
+| Var (AI side) | Must be | If left unset |
+|---|---|---|
+| `BACKEND_URL` | this backend's base URL | **Flow 2 is skipped entirely.** Every policy uploaded through F2 acks, matches, and never reports back. |
+
+That is the only one.
+
+`BACKEND_URL` is the single highest-consequence unset-by-default variable in the
+whole integration. The retry sweep now recovers from a lost callback
+(`AI_MATCHMAKING_STALE_AFTER`), but it recovers by re-running matchmaking — it
+cannot invent an `ai_policy_id` the AI service never sent. Set
+`BACKEND_PUBLIC_URL` here as well, so the AI service can honour `callback_url`
+per-environment once it supports it.
 
 ---
 
@@ -270,10 +310,38 @@ Matchmaking is waiting on the AI service. Check
 `skipped`, not `pending`, so the badge clears immediately. After a `failed`
 status, retry with `POST /api/v1/policies/:id/rematch`.
 
+A card that stays on `processing` for longer than `AI_MATCHMAKING_STALE_AFTER`
+(30m default) is re-queued automatically by the matchmaking-retry job — the AI
+service acked but its Flow 2 callback never arrived, almost always because
+`BACKEND_URL` is unset on the AI service. Fix that first; the sweep is a safety
+net, not a substitute. `processing_attempts` caps the retries, so a card that is
+still stuck after a few sweeps has exhausted them and needs a manual
+`POST /api/v1/policies/:id/rematch` once the cause is fixed.
+
+**Policy shows a "completed" badge above empty claim lists**
+Its `ai_policy_id` points at a `policies` row that no longer exists — usually
+because the AI service's `seed_demo_data.py` or `reset_schema.py` was run
+against this database. Those scripts correctly leave `cis_*` alone, but no
+foreign key cascades into it. Run `POST /api/v1/admin/reconcile?dry_run=true` to
+see the damage, then without the flag to clear the dangling rows and re-queue
+the affected policies.
+
 **F3 chart is empty**
 Three possible causes, in order of likelihood: no claim has its chart checkbox
 ticked (US28 — the default); the watched claims have no snapshots yet (run
 `POST /api/v1/admin/snapshot-scores`); or the `from`/`to` window excludes them.
+
+**F3 chart is a flat horizontal line**
+Nothing is changing the scores. The hourly job asks the AI service to rescore
+before it captures, so this means `AI_SERVICE_URL` is empty, the AI service is
+unreachable, or no content is arriving. Check `/health/ready`'s
+`ai_service.reachable`, trigger one manually with `POST /api/v1/admin/rescore`,
+and populate the databank with `POST /api/v1/admin/generate-sample-content` if
+the deployment has no crawler feeding it.
+
+**`POST /api/v1/admin/*` returns 503**
+`AI_SERVICE_URL` is empty. Every endpoint in that group except
+`/admin/snapshot-scores` and `/admin/reconcile` proxies onto the AI service.
 
 ---
 

@@ -386,6 +386,65 @@ func (r *ClaimRepository) CountClaimsByTopic(ctx context.Context, claimType stri
 	return out, nil
 }
 
+// CountAllClaims returns the total number of claims the AI service holds.
+//
+// Used as a sanity check before a reconciliation sweep: an empty claims table
+// makes every backend overlay row look orphaned.
+func (r *ClaimRepository) CountAllClaims(ctx context.Context) (int64, error) {
+	var total int64
+	err := r.db.WithContext(ctx).Table("claims").Count(&total).Error
+	return total, err
+}
+
+// OrphanCounts is how many backend overlay rows point at a claim that no longer
+// exists.
+type OrphanCounts struct {
+	Reviews   int64
+	Alerts    int64
+	Snapshots int64
+}
+
+// orphanedOverlayTables are the backend-owned tables carrying a soft claim_id
+// reference. They have no foreign key — the backend must never constrain a
+// table it does not own — so an AI-side delete leaves them dangling.
+var orphanedOverlayTables = []string{
+	"cis_claim_reviews",
+	"cis_claim_alerts",
+	"cis_claim_score_snapshots",
+}
+
+// notExistsInClaims is the shared predicate for "this claim_id is gone".
+const notExistsInClaims = "NOT EXISTS (SELECT 1 FROM claims c WHERE c.id = %s.claim_id)"
+
+// CountOrphanedOverlays reports how many overlay rows reference a deleted claim.
+func (r *ClaimRepository) CountOrphanedOverlays(ctx context.Context) (OrphanCounts, error) {
+	var counts OrphanCounts
+	targets := []*int64{&counts.Reviews, &counts.Alerts, &counts.Snapshots}
+
+	for i, table := range orphanedOverlayTables {
+		err := r.db.WithContext(ctx).
+			Table(table).
+			Where(fmt.Sprintf(notExistsInClaims, table)).
+			Count(targets[i]).Error
+		if err != nil {
+			return counts, err
+		}
+	}
+	return counts, nil
+}
+
+// DeleteOrphanedOverlays removes every overlay row whose claim no longer exists.
+func (r *ClaimRepository) DeleteOrphanedOverlays(ctx context.Context) error {
+	for _, table := range orphanedOverlayTables {
+		err := r.db.WithContext(ctx).
+			Exec(fmt.Sprintf("DELETE FROM %s WHERE "+notExistsInClaims, table, table)).Error
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // orderClause maps a sort key onto a deterministic SQL ORDER BY.
 //
 // NULLS LAST matters: an unscored claim must never outrank a scored one just
