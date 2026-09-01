@@ -114,14 +114,55 @@ can render three labelled sections instead of one paragraph. The flat
 `activity.content` stays the copyable block. The object is omitted entirely when
 all three columns are null.
 
+### `claim_debunk_segments` — new in PRD v1.5 (US12)
+
+v1.5 replaces the single generic Debunk draft with **one tailored copy
+recommendation per audience segment** affected by the claim. The generation and
+caching rules are unchanged — once, at claim creation, never on view — but the
+relation is now one-to-many, so it cannot be a column on `claims`.
+
+| Column | Expectation |
+|---|---|
+| `claim_id` | The Existing claim. Synthetic claims stay unsegmented. |
+| `segment_name` | The label shown on the card ("Commuters"). Required — an unlabelled variant reads as the generic draft v1.5 removes. |
+| `segment_rationale` | Why this segment was identified; rendered as the card subtitle. Optional. |
+| `content` | The copy written for that segment |
+| `rank` | Card order, most-exposed segment first |
+
+DDL in [sql/02_f6_reference_schema.sql](sql/02_f6_reference_schema.sql). The
+table is **optional**: without it the claim detail page falls back to
+`activity_content` exactly as in v1.4, so shipping it is not a hard dependency
+for the rest of the product.
+
 ### `content_items`
 
 | Column | Used for |
 |---|---|
 | `stance` | **`supporting` / `opposing` / `neutral`** — drives both the NPR formula and the US12 Positive/Negative statement lists |
+| `sentiment` | **New in v1.5.** `positive` / `negative` / `neutral` — the Baseline Climate Sentiment half of the F6 Climate Sentiment Index (PRD 6.6.1) |
+| `city` | **New in v1.5.** The resolved city name, scoping every F6 metric to the city configured in F4 (US65) |
 | `author_id` | Top 5 Accounts (US12). A handle like `@driver_jkt` is ideal. |
 | `impressions` | Ranks Top 5 Accounts |
 | `text`, `source`, `claim_id`, `created_at` | Statement lists |
+
+**`sentiment` is not `stance`, and stance cannot stand in for it.** Stance is a
+position relative to a specific claim and only exists for content the pipeline
+clustered. Opposing a false claim is *good* for the city's information health,
+so reading stance as sentiment would invert the index for exactly the content
+the product most wants to see. PRD 6.6.1 is also explicit that
+`TotalClimateConversationVolume` is "independent of the claim repository" —
+unclustered rows count too, and a `NULL` sentiment still counts toward the
+denominator so a classification backlog cannot make the city look calmer than it
+is.
+
+**`city` must be a normalised city name**, matching the catalog in
+`internal/models/f6_cities.go` exactly (`Jakarta`, `Makassar`, …). `location` is
+free text written by the source platform and cannot be joined on; the backend
+must not be in the business of geocoding it.
+
+Both columns are **optional**: without `sentiment`, F6's O1 gauge reports
+`unavailable` and the rest of the page still works; without `city`, the F4
+selection labels the instance instead of partitioning it and the API says so.
 
 `stance` is the single most load-bearing field here. The PRD's "Positive
 Statements" and "Negative Statements" map to `supporting` and `opposing`;
@@ -691,6 +732,14 @@ Collected in one place, in priority order.
 | 5 | **An `account` table** — durable platform account identity, with `created_at_platform`, `profile_hash`, bio, declared location and client/app string | Three of F5's five signals need a durable account entity. `content_items.author_id` is a string on a post, so Provenance and Automation have no source at all, and the allowlist has nothing stable to key on. |
 | 6 | Sign off (or amend) the `BEYOND 10.10` columns in `docs/sql/01_f5_reference_schema.sql` | Nine requirements stated in PRD Section 10 have no column in 10.10. The backend's proposals are in that file, each marked with its gap number. |
 | 7 | Implement Flow 7 and Flow 8 | Without them F5 has no data. Everything downstream — the read models, the review workflow, the report, the badge on F1 — is built and waiting. |
+| 8 | **`content_items.sentiment`** (v1.5) | The Baseline Climate Sentiment half of the F6 Climate Sentiment Index. Without it O1's gauge — the visual centrepiece of the new Overview page — reports `unavailable`. Nothing else on F6 depends on it. |
+| 9 | **`claim_debunk_segments`** (v1.5) | US12's per-audience Debunk recommendations. Without it the detail page still shows the single v1.4 draft, so this degrades rather than breaks. Flow 3's demo claim should populate at least one segment (US33). |
+| 10 | **`content_items.city`** (v1.5) | Makes US65's city selection actually partition F6 rather than label it. Lowest priority of the three: PRD 6.6.4 already scopes this phase to one city at a time. |
+
+Asks 8–10 are the PRD v1.5 additions, with DDL in
+[sql/02_f6_reference_schema.sql](sql/02_f6_reference_schema.sql). All three are
+optional by construction — the backend probes for them at boot and degrades in a
+documented way — so none of them blocks a deploy.
 
 Asks 1–3 break nothing today: unknown request fields are ignored, so the
 backend's half of each is already in place and inert until the AI side catches

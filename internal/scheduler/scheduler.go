@@ -181,6 +181,16 @@ func (s *Scheduler) runScoreSnapshot() {
 		log.Printf("[cron] captured %d claim score snapshots", count)
 	}
 
+	// US71: a crossing is a change between two evaluations, so it can only be
+	// detected where the scores have just moved. Running it here — after the
+	// rescore and capture, not on a clock of its own — is what makes "on each
+	// score refresh" true rather than approximately true.
+	if crossings, err := s.alerts.EvaluateCrossings(ctx); err != nil {
+		log.Printf("[cron] threshold crossing evaluation failed: %v", err)
+	} else if crossings > 0 {
+		log.Printf("[cron] %d watched claims crossed the alert threshold", crossings)
+	}
+
 	if deleted, err := s.alerts.PruneSnapshots(ctx, SnapshotRetention); err != nil {
 		log.Printf("[cron] snapshot pruning failed: %v", err)
 	} else if deleted > 0 {

@@ -13,6 +13,7 @@ Documentation is intentionally Markdown, not Swagger/OpenAPI.
 | Health probes | [health.md](health.md) |
 | Authentication | [auth.md](auth.md) |
 | Topics (filter chips) | [topics.md](topics.md) |
+| **F6** Overview | [overview.md](overview.md) |
 | **F1** Claim Repository Bank | [claims.md](claims.md) |
 | **F2** Public Policy Bank | [policies.md](policies.md) |
 | **F3** Alert Page | [alerts.md](alerts.md) |

@@ -32,6 +32,8 @@ func newTestApp(t *testing.T) *fiber.App {
 		Alert:   &handler.AlertHandler{},
 		Setting: &handler.SettingHandler{},
 		Admin:   &handler.AdminHandler{},
+
+		Overview: &handler.OverviewHandler{},
 	}, &service.AuthService{})
 
 	return app
@@ -66,6 +68,9 @@ func TestEveryDocumentedRouteIsRegistered(t *testing.T) {
 		{fiber.MethodGet, "/api/v1/auth/me"},
 		{fiber.MethodPost, "/api/v1/auth/logout"},
 
+		{fiber.MethodGet, "/api/v1/overview"},
+		{fiber.MethodGet, "/api/v1/overview/topics/:id"},
+
 		{fiber.MethodGet, "/api/v1/topics"},
 		{fiber.MethodGet, "/api/v1/topics/:id"},
 
@@ -95,10 +100,15 @@ func TestEveryDocumentedRouteIsRegistered(t *testing.T) {
 		{fiber.MethodPost, "/api/v1/alerts"},
 		{fiber.MethodDelete, "/api/v1/alerts/:claimId"},
 		{fiber.MethodPatch, "/api/v1/alerts/:claimId/chart"},
+		{fiber.MethodGet, "/api/v1/alerts/notifications"},
+		{fiber.MethodPost, "/api/v1/alerts/notifications/acknowledge"},
 
 		{fiber.MethodGet, "/api/v1/settings"},
 		{fiber.MethodGet, "/api/v1/settings/alert-threshold"},
 		{fiber.MethodPut, "/api/v1/settings/alert-threshold"},
+		{fiber.MethodGet, "/api/v1/settings/cities"},
+		{fiber.MethodGet, "/api/v1/settings/city"},
+		{fiber.MethodPut, "/api/v1/settings/city"},
 
 		{fiber.MethodPost, "/api/v1/admin/generate-generic-claim"},
 		{fiber.MethodPost, "/api/v1/admin/snapshot-scores"},
@@ -131,6 +141,8 @@ func TestProtectedRoutesRejectAnonymousRequests(t *testing.T) {
 	protected := []routeKey{
 		{fiber.MethodGet, "/api/v1/auth/me"},
 		{fiber.MethodPost, "/api/v1/auth/logout"},
+		{fiber.MethodGet, "/api/v1/overview"},
+		{fiber.MethodGet, "/api/v1/overview/topics/" + id},
 		{fiber.MethodGet, "/api/v1/topics"},
 		{fiber.MethodGet, "/api/v1/topics/" + id},
 		{fiber.MethodGet, "/api/v1/claims/repository"},
@@ -157,9 +169,14 @@ func TestProtectedRoutesRejectAnonymousRequests(t *testing.T) {
 		{fiber.MethodPost, "/api/v1/alerts"},
 		{fiber.MethodDelete, "/api/v1/alerts/" + id},
 		{fiber.MethodPatch, "/api/v1/alerts/" + id + "/chart"},
+		{fiber.MethodGet, "/api/v1/alerts/notifications"},
+		{fiber.MethodPost, "/api/v1/alerts/notifications/acknowledge"},
 		{fiber.MethodGet, "/api/v1/settings"},
 		{fiber.MethodGet, "/api/v1/settings/alert-threshold"},
 		{fiber.MethodPut, "/api/v1/settings/alert-threshold"},
+		{fiber.MethodGet, "/api/v1/settings/cities"},
+		{fiber.MethodGet, "/api/v1/settings/city"},
+		{fiber.MethodPut, "/api/v1/settings/city"},
 		{fiber.MethodPost, "/api/v1/admin/generate-generic-claim"},
 		{fiber.MethodPost, "/api/v1/admin/snapshot-scores"},
 		{fiber.MethodPost, "/api/v1/admin/generate-sample-content"},

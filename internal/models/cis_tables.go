@@ -201,6 +201,21 @@ func (r *CISClaimReview) BeforeCreate(*gorm.DB) error {
 	return nil
 }
 
+// Threshold-crossing directions (PRD v1.5, US71).
+const (
+	// ThresholdStatusUnknown is the state of a freshly watched claim, before
+	// any evaluation has run. US71 fires "only for a genuine transition", so
+	// the first evaluation records a baseline and never counts as a crossing.
+	ThresholdStatusUnknown = ""
+	ThresholdStatusOver    = "over"
+	ThresholdStatusUnder   = "under"
+
+	// CrossingDirectionUp is below -> above threshold; Down is the reverse.
+	// US71 requires notifying on both.
+	CrossingDirectionUp   = "up"
+	CrossingDirectionDown = "down"
+)
+
 // CISClaimAlert is one row of the F3 watchlist (US14, US29, US30).
 //
 // Rows are only ever created through the F1 bell-icon confirmation flow, and
@@ -213,8 +228,20 @@ type CISClaimAlert struct {
 	ChartVisible bool       `gorm:"column:chart_visible;not null;default:false"`
 	AddedBy      *uuid.UUID `gorm:"column:added_by;type:uuid"`
 	AddedAt      time.Time  `gorm:"column:added_at;not null;index:idx_cis_claim_alerts_added_at"`
-	CreatedAt    time.Time  `gorm:"column:created_at;not null"`
-	UpdatedAt    time.Time  `gorm:"column:updated_at;not null"`
+
+	// Threshold-crossing detection (PRD v1.5, US71).
+	//
+	// LastThresholdStatus is the Over/Under status recorded at the previous
+	// evaluation. A crossing is the transition between two evaluations, so the
+	// prior status has to be stored somewhere: FinalClaimScore alone only says
+	// where the claim is now, never that it just moved. Empty means "not yet
+	// evaluated" and seeds the baseline without notifying.
+	LastThresholdStatus string     `gorm:"column:last_threshold_status;type:varchar(16);not null;default:''"`
+	CrossedAt           *time.Time `gorm:"column:crossed_at;index:idx_cis_claim_alerts_crossed_at"`
+	CrossedDirection    *string    `gorm:"column:crossed_direction;type:varchar(8)"`
+
+	CreatedAt time.Time `gorm:"column:created_at;not null"`
+	UpdatedAt time.Time `gorm:"column:updated_at;not null"`
 }
 
 // TableName pins the backend-owned table name.
@@ -224,6 +251,66 @@ func (CISClaimAlert) TableName() string { return "cis_claim_alerts" }
 func (a *CISClaimAlert) BeforeCreate(*gorm.DB) error {
 	if a.ID == uuid.Nil {
 		a.ID = uuid.New()
+	}
+	return nil
+}
+
+// CISAlertAcknowledgement records when a user last opened F3 (PRD v1.5, US71).
+//
+// US71 clears both the sidebar counter and the row highlight "once the user
+// opens the F3 page". That is a per-person acknowledgment: one operator opening
+// the page must not silently clear a colleague's badge, so this is keyed by
+// user rather than being a single global timestamp. A crossing counts as
+// unacknowledged for a user when crossed_at is after their acknowledged_at.
+type CISAlertAcknowledgement struct {
+	UserID         uuid.UUID `gorm:"column:user_id;type:uuid;primaryKey"`
+	AcknowledgedAt time.Time `gorm:"column:acknowledged_at;not null"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;not null"`
+}
+
+// TableName pins the backend-owned table name.
+func (CISAlertAcknowledgement) TableName() string { return "cis_alert_acknowledgements" }
+
+// CISClaimHarmEdit is the audit trail for a human override of a claim's Harm
+// sub-scores (PRD v1.5, US23).
+//
+// US23 requires edited sub-scores to be "tagged as human-overridden (vs.
+// AI-original), recording the editing user and timestamp". The values
+// themselves live on the AI-owned claims table, which this backend never
+// writes — harm_human_confirmed is the flag it sets, through the AI service,
+// and a boolean carries neither who nor when nor what changed. This table is
+// append-only and holds all three.
+type CISClaimHarmEdit struct {
+	ID      uuid.UUID `gorm:"column:id;type:uuid;primaryKey"`
+	ClaimID uuid.UUID `gorm:"column:claim_id;type:uuid;not null;index:idx_cis_claim_harm_edits_claim,priority:1"`
+
+	// Previous values, captured before the override, so the AI's original
+	// classification is recoverable from the audit trail alone.
+	PreviousPublicSafety       *float64 `gorm:"column:previous_public_safety"`
+	PreviousInstitutionalTrust *float64 `gorm:"column:previous_institutional_trust"`
+	PreviousEconomic           *float64 `gorm:"column:previous_economic"`
+	PreviousPolicyDisruption   *float64 `gorm:"column:previous_policy_disruption"`
+	PreviousHarmScore          *float64 `gorm:"column:previous_harm_score"`
+
+	// Submitted values. A nil field means the reviewer left that sub-score
+	// alone, which US23 treats as confirming the AI's value rather than
+	// changing it.
+	PublicSafety       *float64 `gorm:"column:public_safety"`
+	InstitutionalTrust *float64 `gorm:"column:institutional_trust"`
+	Economic           *float64 `gorm:"column:economic"`
+	PolicyDisruption   *float64 `gorm:"column:policy_disruption"`
+
+	EditedBy *uuid.UUID `gorm:"column:edited_by;type:uuid"`
+	EditedAt time.Time  `gorm:"column:edited_at;not null;index:idx_cis_claim_harm_edits_claim,priority:2"`
+}
+
+// TableName pins the backend-owned table name.
+func (CISClaimHarmEdit) TableName() string { return "cis_claim_harm_edits" }
+
+// BeforeCreate assigns a UUID.
+func (e *CISClaimHarmEdit) BeforeCreate(*gorm.DB) error {
+	if e.ID == uuid.Nil {
+		e.ID = uuid.New()
 	}
 	return nil
 }

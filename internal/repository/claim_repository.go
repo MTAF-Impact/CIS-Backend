@@ -342,6 +342,51 @@ func (r *ClaimRepository) UpsertReview(ctx context.Context, claimID uuid.UUID, s
 	return &review, nil
 }
 
+// ListDebunkSegments returns a claim's per-audience-segment Debunk
+// recommendations, highest-priority segment first (PRD v1.5, US12).
+//
+// Best-effort by design. claim_debunk_segments is AI-owned and only exists once
+// the AI service has shipped its v1.5 generation step; until then the detail
+// page falls back to the single cached draft in claims.activity_content, which
+// is a degraded page rather than a broken one.
+func (r *ClaimRepository) ListDebunkSegments(ctx context.Context, claimID uuid.UUID) ([]models.AIClaimDebunkSegment, error) {
+	var segments []models.AIClaimDebunkSegment
+	err := r.db.WithContext(ctx).
+		Where("claim_id = ?", claimID).
+		Order("rank ASC, segment_name ASC").
+		Find(&segments).Error
+	if err != nil {
+		if errIsPipelineUnavailable(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return segments, nil
+}
+
+// RecordHarmEdit appends the audit row behind a Harm sub-score override
+// (PRD v1.5, US23).
+func (r *ClaimRepository) RecordHarmEdit(ctx context.Context, edit *models.CISClaimHarmEdit) error {
+	return r.db.WithContext(ctx).Create(edit).Error
+}
+
+// LatestHarmEdit returns the most recent human override of a claim's Harm
+// sub-scores, or ErrNotFound when the values are still the AI's originals.
+func (r *ClaimRepository) LatestHarmEdit(ctx context.Context, claimID uuid.UUID) (*models.CISClaimHarmEdit, error) {
+	var edit models.CISClaimHarmEdit
+	err := r.db.WithContext(ctx).
+		Where("claim_id = ?", claimID).
+		Order("edited_at DESC").
+		First(&edit).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &edit, nil
+}
+
 // ListTopics returns every topic for the F1 filter chips (US6, US15).
 func (r *ClaimRepository) ListTopics(ctx context.Context) ([]models.AITopic, error) {
 	var topics []models.AITopic

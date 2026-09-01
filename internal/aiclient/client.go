@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -327,16 +328,23 @@ func (c *Client) do(ctx context.Context, method, path string, timeout time.Durat
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	}
 
+	start := time.Now()
+	logAICallStart(method, path)
+
 	res, err := c.client.Do(req)
 	if err != nil {
+		logAICallEnd(method, path, 0, start, err)
 		return fmt.Errorf("call AI service: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return fmt.Errorf("AI service returned %s: %s", res.Status, strings.TrimSpace(string(snippet)))
+		message := strings.TrimSpace(string(snippet))
+		logAICallEnd(method, path, res.StatusCode, start, fmt.Errorf("%s", message))
+		return fmt.Errorf("AI service returned %s: %s", res.Status, message)
 	}
+	logAICallEnd(method, path, res.StatusCode, start, nil)
 
 	if out == nil {
 		return nil
@@ -353,6 +361,37 @@ func (c *Client) do(ctx context.Context, method, path string, timeout time.Durat
 		return fmt.Errorf("decode AI response: %w", err)
 	}
 	return nil
+}
+
+// logAICallStart / logAICallEnd bracket every outbound call to the AI service.
+// Because all nine calls funnel through do, this is the whole AI integration's
+// observability: one line as a call goes out, one as it comes back with its
+// status and wall time — so a slow LLM call in flight and a hung hand-off look
+// different in the log, and a background matchmaking or detection run is no
+// longer silent.
+//
+// The readiness probe (pathHealth) is polled continuously and is logged only
+// when it fails.
+func logAICallStart(method, path string) {
+	if path == pathHealth {
+		return
+	}
+	log.Printf("[ai] > %s %s", method, path)
+}
+
+func logAICallEnd(method, path string, status int, start time.Time, err error) {
+	if path == pathHealth && err == nil {
+		return
+	}
+	elapsed := time.Since(start).Round(time.Millisecond)
+	switch {
+	case err != nil && status == 0:
+		log.Printf("[ai] < %s %s failed after %s: %v", method, path, elapsed, err)
+	case err != nil:
+		log.Printf("[ai] < %s %s %d after %s: %v", method, path, status, elapsed, err)
+	default:
+		log.Printf("[ai] < %s %s %d in %s", method, path, status, elapsed)
+	}
 }
 
 // Timeout exposes the fast-call timeout, used when the caller builds its own

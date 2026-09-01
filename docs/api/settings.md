@@ -103,6 +103,77 @@ that condition, never `422`.
 
 ---
 
+# US65 — City configuration
+
+**New in PRD v1.5.** Which single Indonesian city this instance is monitoring.
+Only one is active at a time; selecting a new one replaces the previous
+selection outright — there is no concurrent multi-city state in this phase.
+
+It scopes the entire [F6 Overview page](overview.md): the Climate Sentiment
+Index (O1), the topic treemap (O2) and the policy leaderboard (O3).
+
+The city list is a closed set held in code (`internal/models/f6_cities.go`), not
+a table. It is reference data that changes on a human timescale, and making it a
+table would invite a second source of truth against the IANA zone the F5 report
+footer already needs.
+
+## GET /api/v1/settings/cities
+
+The dropdown's options, plus the current selection.
+
+```json
+{
+  "success": true,
+  "message": "configurable cities",
+  "data": {
+    "cities": [
+      { "name": "Jakarta", "province": "DKI Jakarta", "timezone": "Asia/Jakarta" },
+      { "name": "Makassar", "province": "Sulawesi Selatan", "timezone": "Asia/Makassar" }
+    ],
+    "selected": { "name": "Jakarta", "province": "DKI Jakarta", "timezone": "Asia/Jakarta" }
+  }
+}
+```
+
+## GET /api/v1/settings/city
+
+The current selection alone, in the same shape as `selected` above.
+
+## PUT /api/v1/settings/city
+
+**Body**
+
+| Field | Type | Rules |
+|---|---|---|
+| `city` | string | required — must match a `name` from `GET /settings/cities`, case-insensitively |
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/settings/city \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"city":"Makassar"}'
+```
+
+**Selecting a city also sets `city_timezone`.** Before v1.5 those were
+independent settings, which meant an instance could be monitoring Makassar while
+stamping its F5 reports in Jakarta time. US65 gives the city one source of
+truth, and the timezone follows it. The change is recorded in the setting
+history like any other governed change.
+
+**Errors** — `422 UNPROCESSABLE_ENTITY` for a city outside the list, naming
+`GET /api/v1/settings/cities` in the message.
+
+### What the city actually filters
+
+If the AI service tags content with a city
+([sql/02_f6_reference_schema.sql](../sql/02_f6_reference_schema.sql)), the
+selection genuinely partitions F6: a claim belongs to the city when any content
+backing it does. If it does not, the selection **labels** the instance instead,
+and `city.partitioned` on the F6 response is `false` so the UI can say so. PRD
+6.6.4 already scopes this phase to one city at a time, so an untagged deployment
+is the single-city instance the PRD describes rather than a broken one.
+
+---
+
 # The detector control panel (US62)
 
 F4 grew from one threshold to roughly thirty governed parameters. They do **not**
@@ -185,6 +256,10 @@ else in the system knows which city. An invalid zone name is rejected with `422`
 rather than silently falling back to UTC, which would put a wrong local time in
 a document that is going to a platform.
 
+Since v1.5 this is normally set for you: `PUT /api/v1/settings/city` writes the
+selected city's zone here. Setting it directly still works and is the escape
+hatch for a deployment whose city is not in the US65 catalog.
+
 The rest of F5 is documented in [networks.md](networks.md).
 
 ---
@@ -198,6 +273,13 @@ The "Generate Generic Claim" MVP test-data button (US33).
 | Field | Type | Rules |
 |---|---|---|
 | `topic_id` | string | optional UUID — pins the claim to an existing topic |
+
+**v1.5 cross-reference (US33).** The generated claim must exercise both v1.5
+additions to be useful as demo data: its Debunk Activity needs at least one
+segmented recommendation (US12) and its four Harm sub-scores must be present so
+they can be edited (US23). Both are produced by the AI service, which owns the
+generator — this endpoint proxies onto it. See
+[AI-INTEGRATION.md](../AI-INTEGRATION.md).
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/admin/generate-generic-claim \

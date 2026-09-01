@@ -152,6 +152,61 @@ the requirement, and it is why the breakdown is not a separate endpoint.
 A `null` value means the AI service has not computed it yet. It is not zero, and
 the UI should not render it as such.
 
+Two additions in v1.5 sit on the same object:
+
+- **`formula`** — the plain-language sentence behind the US23 info-tooltip,
+  generated from the same weight constants as the score, so the explanation and
+  the arithmetic cannot drift apart.
+- **`harm_breakdown.edit`** — the audit trail of a human override: who, when,
+  and the four sub-scores plus the composite `harm` as they were before. Present
+  only once an override has happened, which is what lets the UI mark an edited H
+  distinctly from an AI-original one. `human_confirmed` cannot do that job, since
+  an empty confirmation also sets it.
+
+Only the four Harm sub-components are editable (US23). R, V, F and EI remain
+AI-only, and this backend still computes none of them: the edit is proxied to
+the AI service, which recomputes H → ClaimScore → FinalClaimScore.
+
+---
+
+## Indonesia Climate Sentiment Index (PRD 6.6, new in v1.5)
+
+The one score this backend **does** compute. It is not a claim-level value: it
+asks whether the *overall* climate conversation — neutral and genuinely positive
+discourse included — is trending toward trust or distrust, which is an aggregate
+the AI service does not roll up.
+
+```
+CSI            = BCS_normalized × 0.5 + (100 − RiskLoad) × 0.5
+BCS            = (positive − negative) / total          → −1 … +1
+BCS_normalized = (BCS + 1) / 2 × 100                    → 0 … 100
+RiskLoad       = Σ(FinalClaimScore_i × Volume_i) / total, for claims scoring ≥ 50
+```
+
+The formulas and their constants live in `internal/scoring/csi.go`, next to the
+claim weights they mirror: PRD 6.5's transparency requirement applies here too,
+so the one place the constants are written must be the one place they are
+applied.
+
+| Parameter | Value | Source |
+|---|---|---|
+| Component weights | 0.5 / 0.5 | PRD 6.6 |
+| `RiskThreshold` | 50 | PRD 6.6.2 recommended default |
+| Rolling window | 7 days | PRD 6.6.3 |
+| Momentum lag | 24 h | PRD 6.6.3 |
+| Minimum volume | 100 items | PRD 6.6.3 ("a defined minimum") |
+| Gauge bands | equal thirds | Not specified by the PRD; documented, not hidden |
+
+`Volume_i` counts a claim's Supporting **and** Opposing content only, per
+6.6.2's definition; neutral content stays in the BCS denominator, where the
+definition is explicitly "all climate-related content". RiskLoad is clamped to
+0–100 — unlike the claim parameters it is not mathematically bounded above,
+since `Volume_i` is a subset of the denominator.
+
+Below the minimum volume the index reports `insufficient_data` rather than a
+score, per 6.6.3: a quiet week must not read as a calm one. See
+[api/overview.md](api/overview.md).
+
 ---
 
 ## Where the score is used
@@ -162,7 +217,10 @@ the UI should not render it as such.
 | S1 ranking (US7) | Top 10 by `final_claim_score DESC` — `NULLS LAST`, so an unscored claim never outranks a scored one |
 | Detail page (US23) | Full breakdown |
 | F3 watchlist (US29) | Compared against the F4 global threshold for Over/Under Threshold |
-| F3 chart (US27) | Plotted over time on a fixed 0–100 axis |
+| F3 chart (US27) | Plotted over time on a fixed 0–100 axis, at Day/Week/Month/Year granularity |
+| F3 notifications (US71) | A flip across the threshold between two evaluations raises the sidebar badge |
+| F6 O1 (US67) | Above/below-threshold ratio, and the RiskLoad half of the Climate Sentiment Index |
+| F6 O2/O3 (US69, US70) | Above-threshold counts and average score, combined into the treemap and leaderboard metric |
 
 The chart's history comes from the backend's own `cis_claim_score_snapshots`
 table, because the AI service stores only the current value. See

@@ -136,6 +136,32 @@ the chart, which is exactly what US14's "Remove" requires — no extra bookkeepi
 
 Only Existing/Generic claims may be inserted (US26); the service enforces it.
 
+**Threshold-crossing state (US71, v1.5).** `last_threshold_status` holds the
+Over/Under status recorded at the previous evaluation, `crossed_at` and
+`crossed_direction` the last flip. A crossing is a *transition between two
+evaluations*, so the prior status has to be stored somewhere:
+`final_claim_score` alone only says where a claim is now, never that it just
+moved. An empty `last_threshold_status` means "not yet evaluated" and seeds the
+baseline without notifying — US71 fires only for a genuine transition, and a
+first sighting is not one.
+
+### `cis_alert_acknowledgements` — F3 (v1.5)
+One row per user: when they last opened F3. US71 clears the sidebar counter and
+the row highlights on opening the page, which is a per-person acknowledgment —
+one operator opening F3 must not silently clear a colleague's badge. A crossing
+counts as unacknowledged for a user when `crossed_at > acknowledged_at`.
+
+### `cis_claim_harm_edits` — F1 (v1.5)
+Append-only audit of human overrides of the four Harm sub-scores (US23),
+indexed on `(claim_id, edited_at)`.
+
+The values themselves live on the AI-owned `claims` table, which this backend
+never writes; `harm_human_confirmed` is the flag it sets *through* the AI
+service, and a boolean carries neither who nor when nor what changed. US23
+requires all three. Each row also stores the four sub-scores and the composite
+`harm_score` as they were **before** the override, so the AI's original
+classification is recoverable from the audit trail alone.
+
 ### `cis_claim_score_snapshots` — F3
 Point-in-time copies of a claim's Section 6 scores, indexed on
 `(claim_id, captured_at)`.
@@ -155,7 +181,15 @@ restarts.
 |---|---|---|
 | `alert_threshold` | number | Global Over/Under Threshold cutoff, 0–100 (US32) |
 | `claims_last_fetched_at` | timestamp | The S1 "last fetched" label (US9/US33) |
+| `monitored_city` | string | The single Indonesian city this instance monitors (US65, v1.5). Scopes every F6 metric. |
 | `city_timezone` | string | IANA zone for the city-local half of every F5 report footer (PRD 10.8, which requires UTC **and** city-local but never names the city) |
+
+`monitored_city` and `city_timezone` are written together: selecting a city
+(`PUT /settings/city`) sets both. Before v1.5 the timezone stood alone, which
+allowed an instance to monitor Makassar while stamping its reports in Jakarta
+time. The city catalog itself is a closed set in `internal/models/f6_cities.go`,
+not a table — reference data that changes on a human timescale, and a table
+would be a second source of truth against the zone.
 
 The ~20 detector parameters deliberately do **not** live here. See
 `cis_detector_settings` below.

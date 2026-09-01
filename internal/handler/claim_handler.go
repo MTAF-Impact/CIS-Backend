@@ -181,7 +181,7 @@ func (h *ClaimHandler) ConfirmHarm(c *fiber.Ctx) error {
 		}
 	}
 
-	detail, err := h.claims.ConfirmHarm(c.UserContext(), id, req)
+	detail, err := h.claims.ConfirmHarm(c.UserContext(), id, req, middleware.UserIDFromContext(c))
 	if err != nil {
 		return err
 	}

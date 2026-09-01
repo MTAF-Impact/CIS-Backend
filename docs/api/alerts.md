@@ -49,7 +49,10 @@ curl "http://localhost:8080/api/v1/alerts" -H "Authorization: Bearer $TOKEN"
       "final_claim_score": 84.9,
       "threshold_status": "over_threshold",
       "threshold": 70,
-      "is_dormant": true
+      "is_dormant": true,
+      "just_crossed": true,
+      "crossed_direction": "up",
+      "crossed_at": "2026-09-01T08:00:00Z"
     }
   ],
   "meta": { "page": 1, "limit": 20, "total": 2, "total_pages": 1 }
@@ -72,6 +75,85 @@ separately:
 Changing the threshold in F4 immediately changes these values; no recomputation
 is needed. Style `over_threshold` with the controlled low-saturation red noted
 in PRD §5.1, and `under_threshold` with Mint Leaf.
+
+### `just_crossed` (US29, US71) — new in v1.5
+
+`true` while this claim's Over/Under status has flipped **since the reader last
+opened F3**. It drives the light row highlight in PRD §5.5 — distinct from, and
+lighter than, the standing `over_threshold` status colour.
+
+It is per-reader: one operator acknowledging a crossing must not clear a
+colleague's highlight. `crossed_at` and `crossed_direction` (`up` = below →
+above, `down` = above → below) stay on the row after acknowledgment, so the
+table can still show what last happened to a claim; only `just_crossed` clears.
+
+---
+
+## GET /api/v1/alerts/notifications
+
+**New in v1.5.** The sidebar counter badge on the "Alert" nav item (US71).
+
+```bash
+curl "http://localhost:8080/api/v1/alerts/notifications" -H "Authorization: Bearer $TOKEN"
+```
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "alert notifications",
+  "data": {
+    "unacknowledged_count": 2,
+    "acknowledged_at": "2026-08-31T17:04:00Z",
+    "threshold": 70,
+    "crossings": [
+      {
+        "id": "c0000000-0000-0000-0000-000000000002",
+        "claim_statement": "Flood gates were deliberately opened...",
+        "final_claim_score": 84.9,
+        "threshold_status": "over_threshold",
+        "just_crossed": true,
+        "crossed_direction": "up",
+        "crossed_at": "2026-09-01T08:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+`unacknowledged_count` is the badge number. `crossings` names the claims behind
+it — newest first, capped at 20 — so the badge can be expanded into something
+readable rather than only counted. A watchlist where dozens crossed at once is a
+threshold problem, not a paging problem.
+
+### When crossings are detected
+
+On each score refresh: the hourly snapshot job re-evaluates every watched
+claim's Over/Under status against the status recorded at the previous pass, and
+stamps the ones that flipped. A Harm sub-score edit (`PUT
+/claims/:id/harm/confirm`) re-evaluates that claim immediately, rather than
+leaving an edit made at 09:05 unnotified until 10:00.
+
+A crossing fires **only for a genuine transition**, never for a claim already
+steady above or below the threshold. A claim just added to the watchlist has its
+current status recorded as a baseline without notifying — a first sighting is
+not a transition.
+
+---
+
+## POST /api/v1/alerts/notifications/acknowledge
+
+**New in v1.5.** Clears this user's badge and row highlights (US71).
+
+US71 treats **opening F3** as the acknowledgment, so the frontend calls this on
+entering the page — *after* rendering the list it was handed, since
+acknowledging is what makes the next render unhighlighted. The PRD flags a
+per-row dismiss as the alternative; that would be a different endpoint shape,
+not a different mechanism.
+
+Returns the same payload as `GET /api/v1/alerts/notifications`, now with
+`unacknowledged_count: 0`.
 
 ---
 
@@ -191,6 +273,12 @@ error.
 |---|---|---|
 | `granularity` | `week` | `day`, `week`, `month`, `year` |
 | `from`, `to` | — | RFC3339 or `YYYY-MM-DD` |
+
+`granularity` backs the Day/Week/Month/Year selector US27 added to `[C1]` in
+v1.5. It is the **same four values** accepted by
+`GET /claims/:id/score-history`, because US27 requires the selector to be the
+one shared component introduced for the claim detail page's Score History Chart
+— one control, one parameter, two charts.
 
 ```bash
 curl "http://localhost:8080/api/v1/alerts/chart?granularity=week" \

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/cis/cis-backend/internal/models"
 )
@@ -36,6 +37,12 @@ type AlertRow struct {
 	ReviewStatus    string     `gorm:"column:review_status"`
 	TopicName       *string    `gorm:"column:topic_name"`
 	TopicID         *uuid.UUID `gorm:"column:topic_id"`
+
+	// Threshold-crossing state (US71). CrossedAt is when this claim last
+	// flipped Over/Under; the service compares it against the reader's own
+	// acknowledgment to decide whether the row is still highlighted.
+	CrossedAt        *time.Time `gorm:"column:crossed_at"`
+	CrossedDirection *string    `gorm:"column:crossed_direction"`
 }
 
 // ListAlerts returns the watchlist ordered by most recently appended first
@@ -60,6 +67,7 @@ func (r *AlertRepository) ListAlerts(ctx context.Context, search string, limit, 
 	err := base.Session(&gorm.Session{}).
 		Select(
 			"a.id AS alert_id, a.claim_id, a.chart_visible, a.added_at, "+
+				"a.crossed_at, a.crossed_direction, "+
 				"c.claim_statement, c.created_at AS claim_created_at, c.final_claim_score, c.is_dormant, c.topic_id, "+
 				"COALESCE(rev.status, ?) AS review_status, t.name AS topic_name",
 			models.ReviewStatusUnreviewed,
@@ -141,4 +149,120 @@ func (r *AlertRepository) AlertedClaimIDs(ctx context.Context, claimIDs []uuid.U
 		out[id] = true
 	}
 	return out, nil
+}
+
+// --- Threshold-crossing detection (PRD v1.5, US71) ---
+
+// ThresholdState is a watched claim's current score alongside the Over/Under
+// status recorded at the previous evaluation.
+type ThresholdState struct {
+	ClaimID         uuid.UUID `gorm:"column:claim_id"`
+	FinalClaimScore *float64  `gorm:"column:final_claim_score"`
+	LastStatus      string    `gorm:"column:last_threshold_status"`
+}
+
+// ListThresholdStates returns the crossing inputs for the watchlist. An empty
+// claimIDs slice means every watched claim.
+func (r *AlertRepository) ListThresholdStates(ctx context.Context, claimIDs []uuid.UUID) ([]ThresholdState, error) {
+	q := r.db.WithContext(ctx).
+		Table("cis_claim_alerts AS a").
+		Joins("INNER JOIN claims AS c ON c.id = a.claim_id").
+		Select("a.claim_id, a.last_threshold_status, c.final_claim_score")
+	if len(claimIDs) > 0 {
+		q = q.Where("a.claim_id IN ?", claimIDs)
+	}
+
+	var rows []ThresholdState
+	err := q.Scan(&rows).Error
+	return rows, err
+}
+
+// RecordThresholdStatus stores a claim's evaluated Over/Under status.
+//
+// direction is empty when the status was merely observed — a first evaluation
+// seeding the baseline, or a claim that has not moved. Passing a direction
+// records the crossing US71 notifies on, and stamps crossed_at.
+func (r *AlertRepository) RecordThresholdStatus(
+	ctx context.Context, claimID uuid.UUID, status, direction string, at time.Time,
+) error {
+	updates := map[string]any{"last_threshold_status": status, "updated_at": at}
+	if direction != "" {
+		updates["crossed_at"] = at
+		updates["crossed_direction"] = direction
+	}
+	return r.db.WithContext(ctx).
+		Model(&models.CISClaimAlert{}).
+		Where("claim_id = ?", claimID).
+		Updates(updates).Error
+}
+
+// CountCrossingsSince counts watched claims whose last crossing is newer than
+// the reader's acknowledgment, which is the US71 sidebar badge number.
+//
+// A nil since means the user has never opened F3, so every recorded crossing
+// still counts.
+func (r *AlertRepository) CountCrossingsSince(ctx context.Context, since *time.Time) (int64, error) {
+	q := r.db.WithContext(ctx).
+		Model(&models.CISClaimAlert{}).
+		Where("crossed_at IS NOT NULL")
+	if since != nil {
+		q = q.Where("crossed_at > ?", *since)
+	}
+
+	var count int64
+	err := q.Count(&count).Error
+	return count, err
+}
+
+// ListCrossingsSince returns the watchlist rows behind that badge, newest
+// crossing first, so the notification can name the claims rather than only
+// counting them.
+func (r *AlertRepository) ListCrossingsSince(ctx context.Context, since *time.Time, limit int) ([]AlertRow, error) {
+	q := r.db.WithContext(ctx).
+		Table("cis_claim_alerts AS a").
+		Joins("INNER JOIN claims AS c ON c.id = a.claim_id").
+		Joins("LEFT JOIN cis_claim_reviews AS rev ON rev.claim_id = c.id").
+		Joins("LEFT JOIN topics AS t ON t.id = c.topic_id").
+		Where("a.crossed_at IS NOT NULL")
+	if since != nil {
+		q = q.Where("a.crossed_at > ?", *since)
+	}
+
+	var rows []AlertRow
+	err := q.Select(
+		"a.id AS alert_id, a.claim_id, a.chart_visible, a.added_at, "+
+			"a.crossed_at, a.crossed_direction, "+
+			"c.claim_statement, c.created_at AS claim_created_at, c.final_claim_score, c.is_dormant, c.topic_id, "+
+			"COALESCE(rev.status, ?) AS review_status, t.name AS topic_name",
+		models.ReviewStatusUnreviewed,
+	).
+		Order("a.crossed_at DESC").
+		Limit(limit).
+		Scan(&rows).Error
+	return rows, err
+}
+
+// AcknowledgedAt returns when a user last opened F3, or nil if never.
+func (r *AlertRepository) AcknowledgedAt(ctx context.Context, userID uuid.UUID) (*time.Time, error) {
+	var ack models.CISAlertAcknowledgement
+	err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&ack).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ack.AcknowledgedAt, nil
+}
+
+// Acknowledge records that a user has seen the current crossings (US71).
+func (r *AlertRepository) Acknowledge(ctx context.Context, userID uuid.UUID, at time.Time) error {
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}},
+		DoUpdates: clause.Assignments(map[string]any{"acknowledged_at": at, "updated_at": at}),
+	}).Create(&models.CISAlertAcknowledgement{
+		UserID:         userID,
+		AcknowledgedAt: at,
+		UpdatedAt:      at,
+	}).Error
 }

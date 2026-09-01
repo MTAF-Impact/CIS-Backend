@@ -23,6 +23,9 @@ type Handlers struct {
 	Setting *handler.SettingHandler
 	Admin   *handler.AdminHandler
 
+	// F6 — Overview.
+	Overview *handler.OverviewHandler
+
 	// F5 — Coordinated-Network Detector.
 	Network         *handler.NetworkHandler
 	Allowlist       *handler.AllowlistHandler
@@ -74,6 +77,11 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	// consumes them.
 	internal.Get("/detection/exclusions", h.Allowlist.Exclusions)
 
+	// F6 — Overview. First in the sidebar (US66), and so first here.
+	overview := v1.Group("/overview", authed)
+	overview.Get("/topics/:id", h.Overview.Topic)
+	overview.Get("/", h.Overview.Page)
+
 	// Topics — the filter chips shared by S1 and S2 (US6, US15).
 	topics := v1.Group("/topics", authed)
 	topics.Get("/", h.Topic.List)
@@ -110,6 +118,10 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	// F3 — Alert Page.
 	alerts := v1.Group("/alerts", authed)
 	alerts.Get("/chart", h.Alert.Chart)
+	// US71 threshold-crossing notifications. Registered ahead of "/:claimId"
+	// routes so the literal path is never captured as a claim id.
+	alerts.Get("/notifications", h.Alert.Notifications)
+	alerts.Post("/notifications/acknowledge", h.Alert.Acknowledge)
 	alerts.Get("/", h.Alert.List)
 	alerts.Post("/", h.Alert.Add)
 	alerts.Delete("/:claimId", h.Alert.Remove)
@@ -120,6 +132,12 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	settings.Get("/", h.Setting.List)
 	settings.Get("/alert-threshold", h.Setting.GetAlertThreshold)
 	settings.Put("/alert-threshold", h.Setting.UpdateAlertThreshold)
+	// US65 city configuration. "cities" is the dropdown's option list and
+	// "city" the current selection; the plural is registered first so neither
+	// shadows the other.
+	settings.Get("/cities", h.Setting.Cities)
+	settings.Get("/city", h.Setting.GetCity)
+	settings.Put("/city", h.Setting.SetCity)
 	// F5 detector configuration (US62). Registered before "/:key"-shaped routes
 	// would be, and with the literal sub-paths first, so "ranges" and "history"
 	// are never captured as a parameter.

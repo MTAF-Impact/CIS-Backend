@@ -27,6 +27,30 @@ type AlertRow struct {
 	ThresholdStatus string  `json:"threshold_status"`
 	Threshold       float64 `json:"threshold"`
 	IsDormant       bool    `json:"is_dormant"`
+
+	// JustCrossed drives the US29/US71 row highlight: true while this claim's
+	// Over/Under status has flipped since the reader last opened F3. It is
+	// per-reader, so one operator acknowledging a crossing does not clear a
+	// colleague's highlight.
+	JustCrossed bool `json:"just_crossed"`
+	// CrossedDirection is "up" (below -> above) or "down" (above -> below),
+	// omitted when the claim has never crossed. Retained after acknowledgment
+	// so the table can still show what last happened to a claim.
+	CrossedDirection *string    `json:"crossed_direction,omitempty"`
+	CrossedAt        *time.Time `json:"crossed_at,omitempty"`
+}
+
+// AlertNotifications is the US71 payload behind the sidebar counter badge.
+type AlertNotifications struct {
+	// UnacknowledgedCount is the badge number: watched claims that have crossed
+	// the threshold since this user last opened F3.
+	UnacknowledgedCount int64 `json:"unacknowledged_count"`
+	// AcknowledgedAt is when this user last opened F3, null if never.
+	AcknowledgedAt *time.Time `json:"acknowledged_at"`
+	Threshold      float64    `json:"threshold"`
+	// Crossings names the claims behind the count, newest first, so the badge
+	// can be expanded into something readable rather than only counted.
+	Crossings []AlertRow `json:"crossings"`
 }
 
 // AddAlertRequest is the body of POST /api/v1/alerts, sent after the user

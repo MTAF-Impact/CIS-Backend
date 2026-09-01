@@ -87,6 +87,10 @@ type ClaimNetworkBadge struct {
 }
 
 // HarmBreakdown exposes the Harm Severity sub-scores (PRD 6.2.4).
+//
+// These four are the only manually editable values in the whole score (US23);
+// R, V, F and EI remain AI-only. Editable is therefore a property of this
+// struct, not of ScoreBreakdown.
 type HarmBreakdown struct {
 	PublicSafety       *float64            `json:"public_safety"`
 	InstitutionalTrust *float64            `json:"institutional_trust"`
@@ -94,6 +98,30 @@ type HarmBreakdown struct {
 	PolicyDisruption   *float64            `json:"policy_disruption"`
 	HumanConfirmed     bool                `json:"human_confirmed"`
 	Weights            scoring.HarmWeights `json:"weights"`
+
+	// Edit is the audit trail of the last human override (US23): who changed
+	// the sub-scores and when. Omitted while the values are the AI's originals,
+	// which is what lets the UI mark an edited H distinctly from an AI-original
+	// one wherever the badge appears.
+	Edit *HarmEditAudit `json:"edit,omitempty"`
+}
+
+// HarmEditAudit records a human override of the Harm sub-scores (US23).
+type HarmEditAudit struct {
+	EditedBy *string   `json:"edited_by"`
+	EditedAt time.Time `json:"edited_at"`
+	// Previous holds the AI's classification before the override, so the
+	// original is recoverable from the page as well as the audit table.
+	Previous HarmPrevious `json:"previous"`
+}
+
+// HarmPrevious is the pre-override Harm classification.
+type HarmPrevious struct {
+	PublicSafety       *float64 `json:"public_safety"`
+	InstitutionalTrust *float64 `json:"institutional_trust"`
+	Economic           *float64 `json:"economic"`
+	PolicyDisruption   *float64 `json:"policy_disruption"`
+	HarmScore          *float64 `json:"harm_score"`
 }
 
 // ScoreBreakdown is the Score Transparency Requirement payload (US23, PRD 6.5).
@@ -120,6 +148,11 @@ type ScoreBreakdown struct {
 	IsDormant bool            `json:"is_dormant"`
 	Note      string          `json:"note,omitempty"`
 	Weights   scoring.Weights `json:"weights"`
+
+	// Formula is the plain-language explanation behind the US23 info-tooltip.
+	// Served rather than hard-coded in the frontend so the words and the
+	// weights above can never drift apart.
+	Formula string `json:"formula"`
 }
 
 // PolicyRef is a policy correlated with a claim (US12 many-to-many, US20
@@ -169,6 +202,26 @@ type ActivityContent struct {
 	// frontend that renders them as distinct labelled sections rather than one
 	// paragraph. `content` remains the copyable single block.
 	Debunk *DebunkBlocks `json:"debunk,omitempty"`
+
+	// Segments are the per-audience-segment recommendations US12 requires as of
+	// v1.5: one tailored, individually-copyable draft per segment affected by
+	// the claim, ordered most-exposed first.
+	//
+	// Empty on a deployment whose AI service has not shipped segmentation yet,
+	// and on Synthetic claims, where the Prebunk draft is not segmented. The
+	// frontend falls back to `content` when it is empty; it must never merge
+	// the segments into one box, since targeting is the whole point.
+	Segments []DebunkSegment `json:"segments"`
+}
+
+// DebunkSegment is one audience-segment-specific Debunk recommendation (US12).
+type DebunkSegment struct {
+	Segment string `json:"segment"`
+	// Rationale is why this segment was identified — the framing or concern the
+	// copy addresses. Shown as the card's subtitle.
+	Rationale   *string   `json:"rationale,omitempty"`
+	Content     string    `json:"content"`
+	GeneratedAt time.Time `json:"generated_at"`
 }
 
 // ClaimReview is the reviewer's latest note on a claim's status, read back on

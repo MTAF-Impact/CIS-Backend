@@ -8,6 +8,7 @@ import (
 
 	"github.com/cis/cis-backend/internal/dto"
 	"github.com/cis/cis-backend/internal/middleware"
+	"github.com/cis/cis-backend/internal/models"
 	"github.com/cis/cis-backend/internal/pkg/apperr"
 	"github.com/cis/cis-backend/internal/pkg/response"
 	"github.com/cis/cis-backend/internal/service"
@@ -64,6 +65,45 @@ func (h *SettingHandler) UpdateAlertThreshold(c *fiber.Ctx) error {
 		return err
 	}
 	return response.OK(c, "alert threshold updated", threshold)
+}
+
+// SetCityRequest is the body of PUT /api/v1/settings/city (US65).
+type SetCityRequest struct {
+	City string `json:"city" validate:"required"`
+}
+
+// Cities handles GET /api/v1/settings/cities, the US65 dropdown options.
+func (h *SettingHandler) Cities(c *fiber.Ctx) error {
+	return response.OK(c, "configurable cities", fiber.Map{
+		"cities":   models.IndonesianCities,
+		"selected": h.settings.MonitoredCity(c.UserContext()),
+	})
+}
+
+// GetCity handles GET /api/v1/settings/city (US65).
+func (h *SettingHandler) GetCity(c *fiber.Ctx) error {
+	return response.OK(c, "monitored city", h.settings.MonitoredCity(c.UserContext()))
+}
+
+// SetCity handles PUT /api/v1/settings/city (US65).
+//
+// Single-select: the new city replaces the previous one outright, since this
+// phase has no concurrent multi-city state. Every F6 metric re-scopes on the
+// next request, and the F5 report footer picks up the new city-local timezone.
+func (h *SettingHandler) SetCity(c *fiber.Ctx) error {
+	var req SetCityRequest
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.BadRequest("request body must be valid JSON").Wrap(err)
+	}
+	if err := dto.Validate(req); err != nil {
+		return err
+	}
+
+	city, err := h.settings.SetMonitoredCity(c.UserContext(), req.City, middleware.UserIDFromContext(c))
+	if err != nil {
+		return err
+	}
+	return response.OK(c, "monitored city updated", city)
 }
 
 // AdminHandler serves the F4 MVP test utilities.

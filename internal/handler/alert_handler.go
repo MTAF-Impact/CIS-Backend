@@ -24,13 +24,36 @@ func NewAlertHandler(alerts *service.AlertService) *AlertHandler {
 // List handles GET /api/v1/alerts, the [C3] watchlist table.
 func (h *AlertHandler) List(c *fiber.Ctx) error {
 	rows, total, page, err := h.alerts.List(
-		c.UserContext(), c.Query("q"),
+		c.UserContext(), middleware.UserIDFromContext(c), c.Query("q"),
 		c.QueryInt("page", dto.DefaultPage), c.QueryInt("limit", dto.DefaultLimit),
 	)
 	if err != nil {
 		return err
 	}
 	return response.List(c, "alert watchlist", rows, response.NewMeta(page.Page, page.Limit, total))
+}
+
+// Notifications handles GET /api/v1/alerts/notifications, the US71 sidebar
+// counter badge.
+func (h *AlertHandler) Notifications(c *fiber.Ctx) error {
+	res, err := h.alerts.Notifications(c.UserContext(), middleware.UserIDFromContext(c))
+	if err != nil {
+		return err
+	}
+	return response.OK(c, "alert notifications", res)
+}
+
+// Acknowledge handles POST /api/v1/alerts/notifications/acknowledge.
+//
+// US71 clears the counter and the row highlights when the user opens F3, so the
+// frontend calls this on entering the page — after it has rendered the rows it
+// was given, since acknowledging is what makes the next render unhighlighted.
+func (h *AlertHandler) Acknowledge(c *fiber.Ctx) error {
+	res, err := h.alerts.Acknowledge(c.UserContext(), middleware.UserIDFromContext(c))
+	if err != nil {
+		return err
+	}
+	return response.OK(c, "threshold crossings acknowledged", res)
 }
 
 // Add handles POST /api/v1/alerts, called after the user confirms the bell

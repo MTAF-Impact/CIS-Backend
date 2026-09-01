@@ -31,6 +31,8 @@ var ownedModels = []any{
 	&models.CISPolicy{},
 	&models.CISClaimReview{},
 	&models.CISClaimAlert{},
+	&models.CISAlertAcknowledgement{},
+	&models.CISClaimHarmEdit{},
 	&models.CISClaimScoreSnapshot{},
 	&models.CISSetting{},
 
@@ -67,6 +69,18 @@ var optionalAITables = []string{
 	"detection_run", "coordinated_network", "network_account", "account",
 	"network_edge", "network_evidence_post", "network_burst_bin",
 	"network_claim_link", "offtopic_cluster", "evidence_snapshot",
+}
+
+// optionalF6Tables and optionalF6Columns are the v1.5 additions the AI service
+// has to provision before F6 and the segmented Debunk Activity can be served
+// (PRD v1.5, US12, US67). They degrade rather than fail: a missing debunk
+// segment table falls back to the single cached draft, and missing sentiment
+// data makes O1 report "Insufficient Data", which is the state PRD 6.6.3
+// already requires for thin coverage. See docs/sql/02_f6_reference_schema.sql.
+var optionalF6Tables = []string{"claim_debunk_segments"}
+
+var optionalF6Columns = map[string][]string{
+	"content_items": {"sentiment", "city"},
 }
 
 // Migrate creates and updates the backend-owned cis_* tables, then seeds
@@ -145,6 +159,31 @@ func warnMissingAITables(db *gorm.DB) {
 				"provisions them; F1-F4 are unaffected. See docs/sql/01_f5_reference_schema.sql",
 			len(missingF5), len(optionalAITables))
 	}
+
+	var missingF6 []string
+	for _, table := range optionalF6Tables {
+		if !db.Migrator().HasTable(table) {
+			missingF6 = append(missingF6, table)
+		}
+	}
+	for table, columns := range optionalF6Columns {
+		if !db.Migrator().HasTable(table) {
+			continue
+		}
+		for _, column := range columns {
+			if !db.Migrator().HasColumn(table, column) {
+				missingF6 = append(missingF6, table+"."+column)
+			}
+		}
+	}
+	if len(missingF6) > 0 {
+		log.Printf(
+			"[migrate] PRD v1.5 AI-owned additions not present: %s. "+
+				"Segmented Debunk Activity falls back to the single cached draft and the F6 "+
+				"Climate Sentiment Index reports insufficient_data until they exist; every other "+
+				"F6 section works without them. See docs/sql/02_f6_reference_schema.sql",
+			strings.Join(missingF6, ", "))
+	}
 }
 
 // seedSettings inserts the F4 defaults only when absent, so an operator's saved
@@ -162,6 +201,13 @@ func seedSettings(db *gorm.DB) error {
 			Value:       time.Now().UTC().Format(time.RFC3339),
 			ValueType:   "timestamp",
 			Description: "Timestamp shown as 'last fetched' on the Existing Claim section (PRD US9/US33).",
+		},
+		{
+			Key:       models.SettingMonitoredCity,
+			Value:     models.DefaultMonitoredCity,
+			ValueType: "string",
+			Description: "The single Indonesian city this instance monitors (PRD v1.5, US65). " +
+				"Scopes every city-level metric on the F6 Overview page.",
 		},
 		{
 			Key:       models.SettingCityTimezone,

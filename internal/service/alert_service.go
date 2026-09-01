@@ -33,10 +33,22 @@ func NewAlertService(
 }
 
 // List returns the [C3] watchlist table, newest addition first (US30).
-func (s *AlertService) List(ctx context.Context, search string, page, limit int) ([]dto.AlertRow, int64, dto.PageParams, error) {
+//
+// reader identifies whose acknowledgment decides which rows still carry the
+// US71 "just crossed" highlight. It is read before the acknowledgment is
+// written by the caller, so the page the user opens is the one that shows the
+// highlights they are being told about.
+func (s *AlertService) List(
+	ctx context.Context, reader *uuid.UUID, search string, page, limit int,
+) ([]dto.AlertRow, int64, dto.PageParams, error) {
 	window := dto.NormalizePage(page, limit)
 
 	threshold, err := s.settings.AlertThreshold(ctx)
+	if err != nil {
+		return nil, 0, window, err
+	}
+
+	acknowledged, err := s.acknowledgedAt(ctx, reader)
 	if err != nil {
 		return nil, 0, window, err
 	}
@@ -48,9 +60,83 @@ func (s *AlertService) List(ctx context.Context, search string, page, limit int)
 
 	out := make([]dto.AlertRow, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, toAlertRow(row, threshold))
+		out = append(out, toAlertRow(row, threshold, acknowledged))
 	}
 	return out, total, window, nil
+}
+
+// Notifications returns the US71 sidebar badge: how many watched claims have
+// crossed the threshold since this user last opened F3, and which ones.
+func (s *AlertService) Notifications(ctx context.Context, reader *uuid.UUID) (*dto.AlertNotifications, error) {
+	threshold, err := s.settings.AlertThreshold(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	acknowledged, err := s.acknowledgedAt(ctx, reader)
+	if err != nil {
+		return nil, err
+	}
+
+	count, err := s.alerts.CountCrossingsSince(ctx, acknowledged)
+	if err != nil {
+		return nil, apperr.Internal("could not count threshold crossings").Wrap(err)
+	}
+
+	rows, err := s.alerts.ListCrossingsSince(ctx, acknowledged, crossingListLimit)
+	if err != nil {
+		return nil, apperr.Internal("could not load threshold crossings").Wrap(err)
+	}
+
+	out := &dto.AlertNotifications{
+		UnacknowledgedCount: count,
+		AcknowledgedAt:      acknowledged,
+		Threshold:           threshold,
+		Crossings:           make([]dto.AlertRow, 0, len(rows)),
+	}
+	for _, row := range rows {
+		out.Crossings = append(out.Crossings, toAlertRow(row, threshold, acknowledged))
+	}
+	return out, nil
+}
+
+// Acknowledge clears this user's crossing badge and row highlights (US71).
+//
+// US71 treats opening F3 as the acknowledgment, so the frontend calls this on
+// entering the page, after rendering the list it was handed. The flagged
+// alternative in the PRD — a per-row dismiss — would be a different endpoint
+// shape, not a different mechanism.
+func (s *AlertService) Acknowledge(ctx context.Context, reader *uuid.UUID) (*dto.AlertNotifications, error) {
+	if reader == nil {
+		return nil, apperr.Unauthorized("authentication required")
+	}
+	if err := s.alerts.Acknowledge(ctx, *reader, time.Now().UTC()); err != nil {
+		return nil, apperr.Internal("could not acknowledge threshold crossings").Wrap(err)
+	}
+	return s.Notifications(ctx, reader)
+}
+
+// EvaluateCrossings re-derives every watched claim's Over/Under status and
+// stamps the ones that just flipped (US71). Called after each score refresh.
+func (s *AlertService) EvaluateCrossings(ctx context.Context) (int, error) {
+	threshold, err := s.settings.AlertThreshold(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return evaluateThresholdCrossings(ctx, s.alerts, threshold)
+}
+
+// acknowledgedAt reads a user's last F3 visit. An unauthenticated caller
+// cannot have acknowledged anything, so every crossing counts as new.
+func (s *AlertService) acknowledgedAt(ctx context.Context, reader *uuid.UUID) (*time.Time, error) {
+	if reader == nil {
+		return nil, nil
+	}
+	at, err := s.alerts.AcknowledgedAt(ctx, *reader)
+	if err != nil {
+		return nil, apperr.Internal("could not load alert acknowledgment").Wrap(err)
+	}
+	return at, nil
 }
 
 // Add appends a claim to the watchlist after the user confirms the bell dialog
@@ -243,6 +329,11 @@ func (s *AlertService) CaptureSnapshots(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// crossingListLimit caps how many crossings the notification payload names.
+// The badge is a count; the list beside it is a preview, and a watchlist where
+// dozens crossed at once is a threshold problem, not a paging problem.
+const crossingListLimit = 20
+
 // PruneSnapshots deletes snapshot history older than the retention window.
 func (s *AlertService) PruneSnapshots(ctx context.Context, retention time.Duration) (int64, error) {
 	deleted, err := s.snapshots.DeleteOlderThan(ctx, time.Now().UTC().Add(-retention))
@@ -252,7 +343,7 @@ func (s *AlertService) PruneSnapshots(ctx context.Context, retention time.Durati
 	return deleted, nil
 }
 
-func toAlertRow(row repository.AlertRow, threshold float64) dto.AlertRow {
+func toAlertRow(row repository.AlertRow, threshold float64, acknowledgedAt *time.Time) dto.AlertRow {
 	out := dto.AlertRow{
 		ID:              row.ClaimID.String(),
 		AlertID:         row.AlertID.String(),
@@ -275,5 +366,13 @@ func toAlertRow(row repository.AlertRow, threshold float64) dto.AlertRow {
 	if out.FinalClaimScore != nil && *out.FinalClaimScore >= threshold {
 		out.ThresholdStatus = dto.ThresholdOver
 	}
+
+	// US29/US71: the row highlight marks a status that *just* flipped, which is
+	// a fact about the reader as much as about the claim — it lasts until they
+	// have seen it. The crossing itself stays on the row either way.
+	out.CrossedAt = row.CrossedAt
+	out.CrossedDirection = row.CrossedDirection
+	out.JustCrossed = row.CrossedAt != nil &&
+		(acknowledgedAt == nil || row.CrossedAt.After(*acknowledgedAt))
 	return out
 }

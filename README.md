@@ -7,9 +7,9 @@ linking them to public policy, and surfacing ready-to-use response content.
 
 Go 1.25 · Fiber v2 · GORM · Supabase (Postgres + Storage)
 
-Implements PRD v1.3 Phase 1 — **F1** Claim Repository Bank (with the Section 6
-Claim Scoring System), **F2** Public Policy Bank, **F3** Alert Page, and **F4**
-Admin Settings. F5 is out of scope for this version.
+Implements PRD v1.5 — **F6** Overview, **F1** Claim Repository Bank (with the
+Section 6 Claim Scoring System), **F2** Public Policy Bank, **F3** Alert Page,
+**F4** Admin Settings, and **F5** Coordinated-Network Detector.
 
 ---
 
@@ -67,6 +67,10 @@ Consequences that show up throughout the code:
   soft `ai_policy_id` link supplied by the matchmaking callback.
 - **F3 score history** is snapshotted into `cis_claim_score_snapshots`, since
   the AI service stores only a claim's current score.
+- **F6 needs data the v1.4 AI schema does not carry** — per-item sentiment, a
+  city tag, and per-audience debunk variants. All three are optional and the
+  backend degrades rather than fails without them; see
+  [docs/sql/02_f6_reference_schema.sql](docs/sql/02_f6_reference_schema.sql).
 
 See [docs/DATABASE.md](docs/DATABASE.md).
 

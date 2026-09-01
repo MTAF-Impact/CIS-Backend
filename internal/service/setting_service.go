@@ -125,6 +125,56 @@ func (s *SettingService) SetAlertThreshold(ctx context.Context, threshold float6
 	return view, nil
 }
 
+// MonitoredCity returns the single Indonesian city this instance monitors
+// (PRD v1.5, US65).
+//
+// An unset or unrecognised value falls back to the default rather than
+// erroring: F6 scoped to the wrong city is a smaller failure than an Overview
+// page that will not load, and the stored value can only become unrecognised if
+// the catalog in models shrinks under it.
+func (s *SettingService) MonitoredCity(ctx context.Context) models.City {
+	setting, err := s.settings.Get(ctx, models.SettingMonitoredCity)
+	if err == nil {
+		if city, ok := models.FindCity(setting.Value); ok {
+			return city
+		}
+	}
+	city, _ := models.FindCity(models.DefaultMonitoredCity)
+	return city
+}
+
+// SetMonitoredCity stores the F6 scope city (US65).
+//
+// Selecting a city also sets the IANA zone used for city-local timestamps on F5
+// reports (PRD 10.8). Those were two independent settings before v1.5, which
+// meant an instance could be monitoring Makassar while stamping its reports in
+// Jakarta time; US65 gives the city a single source of truth, so the timezone
+// follows it.
+func (s *SettingService) SetMonitoredCity(ctx context.Context, name string, updatedBy *uuid.UUID) (models.City, error) {
+	city, ok := models.FindCity(name)
+	if !ok {
+		return models.City{}, apperr.Unprocessable(
+			"%q is not in the list of configurable Indonesian cities; see GET /api/v1/settings/cities", name)
+	}
+
+	if _, err := s.settings.Upsert(
+		ctx,
+		models.SettingMonitoredCity,
+		city.Name,
+		"string",
+		"The single Indonesian city this instance monitors (PRD v1.5, US65). "+
+			"Scopes every city-level metric on the F6 Overview page.",
+		updatedBy,
+	); err != nil {
+		return models.City{}, apperr.Internal("could not save the monitored city").Wrap(err)
+	}
+
+	if _, err := s.SetCityTimezone(ctx, city.Timezone, updatedBy); err != nil {
+		return models.City{}, err
+	}
+	return city, nil
+}
+
 // ClaimsLastFetchedAt returns the "last fetched" timestamp shown on S1 (US9).
 func (s *SettingService) ClaimsLastFetchedAt(ctx context.Context) (time.Time, error) {
 	setting, err := s.settings.Get(ctx, models.SettingClaimsLastFetchedAt)

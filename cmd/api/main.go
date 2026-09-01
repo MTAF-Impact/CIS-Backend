@@ -71,6 +71,10 @@ func main() {
 	policyRepo := repository.NewPolicyRepository(db)
 	snapshotRepo := repository.NewSnapshotRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
+	// F6 — Overview. Probes for the PRD v1.5 columns at construction, so the
+	// page degrades on a database the AI service has not caught up with rather
+	// than failing.
+	overviewRepo := repository.NewOverviewRepository(db)
 	// F5 — Coordinated-Network Detector. networkRepo reads the AI-owned
 	// pipeline tables and the cis_* overlays; it is also F1's and F2's one F5
 	// dependency, for the US61 indicator on claim cards.
@@ -84,6 +88,7 @@ func main() {
 	policySvc := service.NewPolicyService(policyRepo, claimRepo, alertRepo, networkRepo, store, ai, cfg.App)
 	alertSvc := service.NewAlertService(alertRepo, claimRepo, snapshotRepo, settingSvc)
 	adminSvc := service.NewAdminService(ai, settingSvc, policyRepo, claimRepo)
+	overviewSvc := service.NewOverviewService(overviewRepo, policyRepo, settingSvc)
 
 	// The F5 graph. allowlistSvc comes before detectionSvc because the pipeline
 	// is handed the exclusion lists at dispatch, and reportSvc wraps networkSvc
@@ -103,6 +108,8 @@ func main() {
 		Alert:   handler.NewAlertHandler(alertSvc),
 		Setting: handler.NewSettingHandler(settingSvc),
 		Admin:   handler.NewAdminHandler(adminSvc, alertSvc),
+
+		Overview: handler.NewOverviewHandler(overviewSvc),
 
 		Network:         handler.NewNetworkHandler(networkSvc, reportSvc),
 		Allowlist:       handler.NewAllowlistHandler(allowlistSvc),

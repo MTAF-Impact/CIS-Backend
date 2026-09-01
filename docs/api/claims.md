@@ -286,7 +286,10 @@ Every component is returned **together with** `final_claim_score`. The collapsed
 number is never served without its inputs.
 
 `weights` are included so the UI can explain the ranking without hardcoding
-constants.
+constants. **New in v1.5:** so is `formula`, the plain-language sentence behind
+the US23 info-tooltip. It is served rather than written into the frontend so the
+words and the weights can never drift apart — both are generated from the same
+constants in `internal/scoring`.
 
 **A note on this worked example:** `reach`, `velocity`, `falseness`, `harm`,
 `harm_breakdown`, and `claim_score` are all written by the AI service and only
@@ -320,6 +323,37 @@ not be lowered on the basis of statistically unreliable data.
 `emotional_intensity_opposing` is **diagnostic only** (US24, PRD 6.4.6). It is
 displayed beside `emotional_intensity` but never enters any score.
 
+**`harm_breakdown.edit` — the human-override audit trail (US23, new in v1.5).**
+Present only once a reviewer has edited the Harm sub-scores; omitted while the
+values are the AI's originals. That presence is what lets the UI mark an edited
+H distinctly from an AI-original one wherever the score badge appears — the
+`human_confirmed` boolean cannot, since it is also set by an empty confirmation.
+
+```json
+{
+  "harm_breakdown": {
+    "public_safety": 90,
+    "human_confirmed": true,
+    "edit": {
+      "edited_by": "0f2c...",
+      "edited_at": "2026-09-01T08:12:00Z",
+      "previous": {
+        "public_safety": 85,
+        "institutional_trust": 78,
+        "economic": 70,
+        "policy_disruption": 65,
+        "harm_score": 76.9
+      }
+    }
+  }
+}
+```
+
+`previous` holds the AI's classification before the override, so the original is
+recoverable from the page as well as from the audit table
+(`cis_claim_harm_edits`). Only the four Harm sub-components are editable; R, V,
+F and EI remain AI-only.
+
 For a Synthetic claim the response omits `score_breakdown`, `top_accounts`,
 `first_caught_at`, the statement counts, and `is_on_alert`; `activity.type`
 is `"prebunk"`.
@@ -343,6 +377,46 @@ into three labelled blocks. `content` stays the copyable single paragraph;
 three, which is the case for every Synthetic claim (their prebunk is flat) and
 for any Existing claim generated before the split existed. An individual block
 can be `null` when only some were written.
+
+### `activity.segments` — segmented Debunk Activity (US12, new in v1.5)
+
+v1.5 replaces the single generic draft with **one tailored recommendation per
+audience segment** affected by the claim. The AI service identifies the segments
+most exposed to it and generates one copy variant each, addressing that
+segment's own framing — still generated once, at claim creation, and cached.
+
+```json
+{
+  "activity": {
+    "type": "debunk",
+    "content": "…the flat, copyable single block…",
+    "segments": [
+      {
+        "segment": "Kampung residents in flood-prone kelurahan",
+        "rationale": "Highest exposure and the strongest distrust signal in the supporting cluster.",
+        "content": "…copy written for this segment…",
+        "generated_at": "2026-08-30T14:32:45Z"
+      },
+      {
+        "segment": "Commuters on the affected corridor",
+        "rationale": "Second-largest share of engagement; concern is journey time, not safety.",
+        "content": "…different copy, different framing…",
+        "generated_at": "2026-08-30T14:32:45Z"
+      }
+    ]
+  }
+}
+```
+
+Always an array, never `null` — a nullable list is a branch the frontend should
+not have to write. It is **empty** for Synthetic claims (whose prebunk is not
+segmented) and on a deployment whose AI service has not shipped segmentation
+yet, where the page falls back to `content`. See
+[sql/02_f6_reference_schema.sql](../sql/02_f6_reference_schema.sql).
+
+Ordered most-exposed segment first. **Never merge the variants into one box** —
+targeting is the entire point of the change, and a single box implying it
+addresses "everyone" is the generic draft v1.5 removed.
 
 ---
 
@@ -394,6 +468,19 @@ curl -X PUT "http://localhost:8080/api/v1/claims/$ID/harm/confirm" \
 
 This call runs on `AI_SERVICE_LONG_TIMEOUT`: the AI service rescores the claim
 before replying.
+
+**Two things happen on this side once the AI service accepts the change**
+(US23's system flow, new in v1.5):
+
+1. An audit row is appended to `cis_claim_harm_edits` recording who edited it,
+   when, and the four values as they were before. It is written *after* the AI
+   service accepts — an audit entry for an edit that failed is worse than none —
+   and it surfaces as `harm_breakdown.edit` on every later read.
+2. The claim is re-evaluated against the alert threshold. Recomputing H moves
+   `final_claim_score`, which can push a watched claim across it; waiting for the
+   hourly snapshot job would leave an edit made at 09:05 unnotified until 10:00.
+   A resulting crossing shows up in
+   [`GET /alerts/notifications`](alerts.md#get-apiv1alertsnotifications).
 
 ---
 
@@ -494,12 +581,18 @@ for Synthetic claims (US20).
 > in a bucket where `final_claim_score` is not.
 
 
-`final_claim_score` over time, from the backend-owned snapshot table.
+`final_claim_score` over time. This backs the **Score History Chart** US12 adds
+to the claim detail page in v1.5.
 
 | Query | Default | Values |
 |---|---|---|
 | `granularity` | `week` | `day`, `week`, `month`, `year` |
 | `from`, `to` | — | RFC3339 or `YYYY-MM-DD` |
+
+`granularity` is the Day/Week/Month/Year selector. US27 requires the Alert
+page's `[C1]` chart to reuse **this same control**, so
+[`GET /alerts/chart`](alerts.md#get-apiv1alertschart) takes the identical four
+values — one component on the frontend, one parameter on the backend.
 
 ```json
 {

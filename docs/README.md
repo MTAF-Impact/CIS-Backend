@@ -4,9 +4,10 @@ Backend for **CIS (Climate Immune System)**, the platform that gives a city
 climate-communications team a scored, auditable repository of climate
 misinformation claims.
 
-Implements **PRD v1.4**: **F1** Claim Repository Bank (+ the Section 6 scoring
-system), **F2** Public Policy Bank, **F3** Alert Page, **F4** Admin Settings +
-the detector control panel, and **F5** Coordinated-Network Detector.
+Implements **PRD v1.5**: **F6** Overview, **F1** Claim Repository Bank (+ the
+Section 6 scoring system), **F2** Public Policy Bank, **F3** Alert Page, **F4**
+Admin Settings + the detector control panel and the US65 city configuration, and
+**F5** Coordinated-Network Detector.
 
 F5's *detection maths* is not here and never will be — Leiden community
 detection, MinHash/LSH, multilingual embeddings, perceptual hashing and
@@ -38,6 +39,7 @@ response envelope, error codes, auth, and shared query parameters.
 | Health probes | [api/health.md](api/health.md) |
 | Authentication | [api/auth.md](api/auth.md) |
 | Topics (filter chips) | [api/topics.md](api/topics.md) |
+| **F6** Overview | [api/overview.md](api/overview.md) |
 | **F1** Claim Repository Bank | [api/claims.md](api/claims.md) |
 | **F2** Public Policy Bank | [api/policies.md](api/policies.md) |
 | **F3** Alert Page | [api/alerts.md](api/alerts.md) |
@@ -53,6 +55,10 @@ response envelope, error codes, auth, and shared query parameters.
 - [sql/01_f5_reference_schema.sql](sql/01_f5_reference_schema.sql) — the same,
   for F5's detection pipeline tables. Columns marked `BEYOND 10.10` are this
   backend's proposal and still need AI-team sign-off.
+- [sql/02_f6_reference_schema.sql](sql/02_f6_reference_schema.sql) — the PRD
+  v1.5 AI-side additions: `content_items.sentiment`, `content_items.city`, and
+  the `claim_debunk_segments` table. All three are optional; the file documents
+  exactly how the backend degrades without each.
 
 ---
 
@@ -74,8 +80,9 @@ the full picture.
 
 | PRD | Feature | Key endpoints |
 |---|---|---|
+| F6 | Overview | `GET /overview`, `GET /overview/topics/:id` |
 | F1 | Claim Repository Bank | `GET /claims/repository`, `GET /claims`, `GET /claims/:id`, `PUT /claims/:id/status` |
 | F2 | Public Policy Bank | `GET /policies`, `POST /policies`, `GET /policies/:id`, `GET /policies/:id/file` |
-| F3 | Alert Page | `GET /alerts`, `POST /alerts`, `PATCH /alerts/:claimId/chart`, `GET /alerts/chart` |
-| F4 | Admin Settings | `GET|PUT /settings/alert-threshold`, `GET|PUT /settings/detector`, `POST /admin/generate-generic-claim` |
+| F3 | Alert Page | `GET /alerts`, `POST /alerts`, `PATCH /alerts/:claimId/chart`, `GET /alerts/chart`, `GET /alerts/notifications` |
+| F4 | Admin Settings | `GET|PUT /settings/alert-threshold`, `GET|PUT /settings/city`, `GET|PUT /settings/detector`, `POST /admin/generate-generic-claim` |
 | F5 | Coordinated-Network Detector | `GET /networks`, `GET /networks/:id`, `PUT /networks/:id/status`, `POST /networks/:id/reports`, `GET|POST /admin/allowlist` |

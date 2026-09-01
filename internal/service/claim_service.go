@@ -292,6 +292,19 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 		UpdatedAt:      row.UpdatedAt,
 		Activity:       buildActivity(claimType, row.AIClaim),
 	}
+
+	segments, err := s.claims.ListDebunkSegments(ctx, row.ID)
+	if err != nil {
+		return nil, apperr.Internal("could not load segmented debunk recommendations").Wrap(err)
+	}
+	for _, seg := range segments {
+		detail.Activity.Segments = append(detail.Activity.Segments, dto.DebunkSegment{
+			Segment:     seg.SegmentName,
+			Rationale:   seg.SegmentRationale,
+			Content:     seg.Content,
+			GeneratedAt: seg.GeneratedAt,
+		})
+	}
 	if row.TopicName != nil {
 		detail.Topic = &dto.TopicRef{ID: row.TopicID.String(), Name: *row.TopicName}
 	}
@@ -319,6 +332,17 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 	firstCaught := row.FirstCaughtAt
 	detail.FirstCaughtAt = &firstCaught
 	detail.ScoreBreakdown = buildBreakdown(row)
+
+	// US23: an edited H must be visually distinguishable from an AI-original one
+	// everywhere it is shown, which needs the edit itself, not only the
+	// harm_human_confirmed flag.
+	edit, err := s.claims.LatestHarmEdit(ctx, row.ID)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.Internal("could not load the harm edit audit trail").Wrap(err)
+	}
+	if edit != nil {
+		detail.ScoreBreakdown.HarmBreakdown.Edit = toHarmEditAudit(edit)
+	}
 
 	counts, err := s.claims.CountStatementsByClaim(ctx, []uuid.UUID{row.ID})
 	if err != nil {
@@ -373,6 +397,9 @@ func buildActivity(claimType string, claim models.AIClaim) dto.ActivityContent {
 		Content:     claim.ActivityContent,
 		GeneratedAt: claim.ActivityGeneratedAt,
 		Available:   claim.ActivityContent != nil && *claim.ActivityContent != "",
+		// Always an array, never null: US12 renders a list of segment cards, and
+		// a nullable list is a branch the frontend should not have to write.
+		Segments: []dto.DebunkSegment{},
 	}
 
 	// Omitted rather than sent as three nulls, so the frontend can branch on
@@ -414,6 +441,7 @@ func buildBreakdown(row *repository.ClaimRow) *dto.ScoreBreakdown {
 		FinalClaimScore: scoring.ClampPtr(row.FinalClaimScore),
 		IsDormant:       row.IsDormant,
 		Weights:         scoring.PublishedWeights(),
+		Formula:         scoring.FormulaSummary,
 	}
 
 	// US25 / PRD 6.4.7: a dormant claim has no volume to measure pushback
@@ -425,6 +453,25 @@ func buildBreakdown(row *repository.ClaimRow) *dto.ScoreBreakdown {
 		breakdown.Note = scoring.DormancyNote
 	}
 	return breakdown
+}
+
+// toHarmEditAudit renders the US23 audit row for the detail page.
+func toHarmEditAudit(edit *models.CISClaimHarmEdit) *dto.HarmEditAudit {
+	out := &dto.HarmEditAudit{
+		EditedAt: edit.EditedAt,
+		Previous: dto.HarmPrevious{
+			PublicSafety:       scoring.ClampPtr(edit.PreviousPublicSafety),
+			InstitutionalTrust: scoring.ClampPtr(edit.PreviousInstitutionalTrust),
+			Economic:           scoring.ClampPtr(edit.PreviousEconomic),
+			PolicyDisruption:   scoring.ClampPtr(edit.PreviousPolicyDisruption),
+			HarmScore:          scoring.ClampPtr(edit.PreviousHarmScore),
+		},
+	}
+	if edit.EditedBy != nil {
+		id := edit.EditedBy.String()
+		out.EditedBy = &id
+	}
+	return out
 }
 
 // correlatedPolicies resolves the policies linked to a claim, preferring this
@@ -617,21 +664,26 @@ func (s *ClaimService) UpdateStatus(ctx context.Context, claimID uuid.UUID, req 
 //
 // Synthetic claims are rejected before the call: they carry no scores at all
 // (US18), so there is nothing to confirm.
-func (s *ClaimService) ConfirmHarm(ctx context.Context, claimID uuid.UUID, req dto.ConfirmHarmRequest) (*dto.ClaimDetail, error) {
+func (s *ClaimService) ConfirmHarm(
+	ctx context.Context, claimID uuid.UUID, req dto.ConfirmHarmRequest, editedBy *uuid.UUID,
+) (*dto.ClaimDetail, error) {
 	if !s.ai.Enabled() {
 		return nil, apperr.Unavailable(
 			"confirming harm sub-scores requires the AI service, because the claims table is owned and " +
 				"written exclusively by it. Set AI_SERVICE_URL to enable this action.")
 	}
 
-	exists, rawType, err := s.claims.ClaimExists(ctx, claimID)
+	// Read before the write, not just for existence: US23 requires the audit
+	// trail to hold what the AI had classified before the reviewer overrode it,
+	// and after the call those values are gone.
+	before, err := s.claims.FindClaimByID(ctx, claimID)
 	if err != nil {
-		return nil, apperr.Internal("could not verify claim").Wrap(err)
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NotFound("claim not found")
+		}
+		return nil, apperr.Internal("could not load claim").Wrap(err)
 	}
-	if !exists {
-		return nil, apperr.NotFound("claim not found")
-	}
-	if models.NormalizeClaimType(rawType) != models.ClaimTypeExisting {
+	if models.NormalizeClaimType(before.ClaimType) != models.ClaimTypeExisting {
 		return nil, apperr.Unprocessable(
 			"only Existing (Generic) claims carry harm sub-scores; " +
 				"Non-Existing (Synthetic) claims are unscored predictions")
@@ -648,6 +700,39 @@ func (s *ClaimService) ConfirmHarm(ctx context.Context, claimID uuid.UUID, req d
 			return nil, apperr.Unavailable("the AI service is not configured")
 		}
 		return nil, apperr.Unavailable("the AI service could not record the harm confirmation: %s", err.Error())
+	}
+
+	// The override has to be attributable (US23), and harm_human_confirmed is a
+	// boolean on an AI-owned table carrying neither who nor when nor what
+	// changed. The audit row is written after the AI service accepted the
+	// change: an audit entry for an edit that failed is worse than none.
+	if err := s.claims.RecordHarmEdit(ctx, &models.CISClaimHarmEdit{
+		ClaimID:                    claimID,
+		PreviousPublicSafety:       before.HarmPublicSafety,
+		PreviousInstitutionalTrust: before.HarmInstitutionalTrust,
+		PreviousEconomic:           before.HarmEconomic,
+		PreviousPolicyDisruption:   before.HarmPolicyDisruption,
+		PreviousHarmScore:          before.HarmScore,
+		PublicSafety:               req.PublicSafety,
+		InstitutionalTrust:         req.InstitutionalTrust,
+		Economic:                   req.Economic,
+		PolicyDisruption:           req.PolicyDisruption,
+		EditedBy:                   editedBy,
+		EditedAt:                   time.Now().UTC(),
+	}); err != nil {
+		return nil, apperr.Internal("could not record the harm edit audit entry").Wrap(err)
+	}
+
+	// The US23 system flow ends with the claim re-evaluating against the alert
+	// threshold: recomputing H moves FinalClaimScore, which can push a watched
+	// claim across it. Waiting for the hourly snapshot job would mean an edit
+	// made at 09:05 goes unnotified until 10:00.
+	threshold, err := s.settings.AlertThreshold(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := evaluateThresholdCrossings(ctx, s.alerts, threshold, claimID); err != nil {
+		return nil, err
 	}
 
 	return s.Detail(ctx, claimID)
