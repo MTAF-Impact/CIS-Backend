@@ -1,8 +1,13 @@
-// Package storage abstracts where uploaded policy documents live (PRD US40).
+// Package storage abstracts where files live: uploaded policy documents (PRD
+// US40) and generated coordinated-network evidence (US58, US60).
 //
 // Supabase Storage is the production driver, keeping the container stateless.
 // The local driver exists so the API can be developed without Supabase
 // credentials.
+//
+// A driver instance is bound to one bucket. The two kinds of file are kept in
+// separate buckets — see config.StorageConfig for why — so the wiring builds
+// one instance per bucket rather than passing a bucket name through every call.
 package storage
 
 import (
@@ -11,6 +16,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -24,28 +30,45 @@ type Object struct {
 	Size     int64
 }
 
-// Storage is the file-store contract used by the policy service.
+// Storage is the file-store contract, scoped to a single bucket.
 type Storage interface {
 	// Upload streams a file to the store and returns its canonical path.
 	Upload(ctx context.Context, path string, r io.Reader, size int64, mimeType string) (*Object, error)
-	// SignedURL returns a time-limited download URL, or ok=false when the
-	// driver cannot produce one and the caller must stream instead.
-	SignedURL(ctx context.Context, path string) (url string, ok bool, err error)
+	// SignedURL returns a time-limited download URL and the instant it stops
+	// working, or ok=false when the driver cannot produce one and the caller
+	// must stream the bytes instead.
+	SignedURL(ctx context.Context, path string) (url string, expiresAt time.Time, ok bool, err error)
 	// Download streams a stored file back.
 	Download(ctx context.Context, path string) (io.ReadCloser, error)
 	// Delete removes a stored file.
 	Delete(ctx context.Context, path string) error
 	// Driver names the backing implementation, for health output.
 	Driver() string
+	// Bucket names the container this instance writes to, for health output
+	// and for the error messages a misconfigured bucket produces.
+	Bucket() string
 }
 
-// New builds the configured storage driver.
+// New builds the configured driver for the policy-document bucket (US40).
 func New(cfg config.StorageConfig) (Storage, error) {
+	return NewForBucket(cfg, cfg.SupabaseBucket)
+}
+
+// NewForBucket builds the configured driver for a named bucket.
+//
+// On the local driver a bucket is a subdirectory of STORAGE_LOCAL_DIR, so a
+// development tree has the same shape as production and a path that works in
+// one works in the other.
+func NewForBucket(cfg config.StorageConfig, bucket string) (Storage, error) {
+	bucket = strings.TrimSpace(bucket)
+	if bucket == "" {
+		return nil, fmt.Errorf("a storage bucket name is required")
+	}
 	switch cfg.Driver {
 	case "supabase":
-		return NewSupabase(cfg)
+		return NewSupabase(cfg, bucket)
 	case "local":
-		return NewLocal(cfg)
+		return NewLocal(cfg, bucket)
 	default:
 		return nil, fmt.Errorf("unsupported storage driver %q", cfg.Driver)
 	}

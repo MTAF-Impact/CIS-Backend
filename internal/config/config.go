@@ -113,14 +113,24 @@ type AuthConfig struct {
 	SeedUserName      string
 }
 
-// StorageConfig selects and configures the policy-document file store.
+// StorageConfig selects and configures the file stores.
+//
+// Two buckets, not one. F2's policy documents are operator uploads; F5's
+// coordinated-network reports are generated evidence about named accounts, and
+// they are downloaded by a browser rather than read by the server. Keeping them
+// apart means the access policy on the evidence bucket can be tightened —
+// or its objects purged on a retention schedule — without touching the
+// documents an operator uploaded, which have neither property.
 type StorageConfig struct {
 	Driver string // supabase | local
 
 	SupabaseURL        string
 	SupabaseServiceKey string
-	SupabaseBucket     string
-	SignedURLTTL       time.Duration
+	// SupabaseBucket holds F2 policy documents.
+	SupabaseBucket string
+	// SupabaseReportBucket holds F5 generated reports and evidence bundles.
+	SupabaseReportBucket string
+	SignedURLTTL         time.Duration
 
 	LocalDir string
 }
@@ -249,12 +259,13 @@ func Load() (*Config, error) {
 			SeedUserName:      getEnv("SEED_USER_NAME", "CIS Admin"),
 		},
 		Storage: StorageConfig{
-			Driver:             getEnv("STORAGE_DRIVER", "supabase"),
-			SupabaseURL:        strings.TrimRight(getEnv("SUPABASE_URL", ""), "/"),
-			SupabaseServiceKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
-			SupabaseBucket:     getEnv("SUPABASE_STORAGE_BUCKET", "policy-documents"),
-			SignedURLTTL:       getEnvDuration("SUPABASE_SIGNED_URL_TTL", time.Hour),
-			LocalDir:           getEnv("STORAGE_LOCAL_DIR", "./uploads"),
+			Driver:               getEnv("STORAGE_DRIVER", "supabase"),
+			SupabaseURL:          strings.TrimRight(getEnv("SUPABASE_URL", ""), "/"),
+			SupabaseServiceKey:   getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+			SupabaseBucket:       getEnv("SUPABASE_STORAGE_BUCKET", "policy-documents"),
+			SupabaseReportBucket: getEnv("SUPABASE_REPORT_BUCKET", "coordinated-network-pdf"),
+			SignedURLTTL:         getEnvDuration("SUPABASE_SIGNED_URL_TTL", time.Hour),
+			LocalDir:             getEnv("STORAGE_LOCAL_DIR", "./uploads"),
 		},
 		AI: AIConfig{
 			BaseURL:                strings.TrimRight(getEnv("AI_SERVICE_URL", ""), "/"),

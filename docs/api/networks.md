@@ -227,12 +227,32 @@ re-downloadable exactly as it was sent.
 
 ### GET /api/v1/reports/:reportId/file
 
-Streams the file. Addressed by report id rather than nested under a network,
-because a report outlives the page it was generated from: an audit entry links
-to it directly, and so does a colleague's bookmark.
+Resolves the artefact. Addressed by report id rather than nested under a
+network, because a report outlives the page it was generated from: an audit
+entry links to it directly, and so does a colleague's bookmark.
 
-The response carries `X-Content-SHA256`, so a recipient can verify the download
-against what was recorded without a second request.
+Artefacts live in the private Supabase bucket `coordinated-network-pdf`
+(`SUPABASE_REPORT_BUCKET`), separate from the policy-document bucket. By default
+this endpoint **redirects to a time-limited signed URL** so the file never
+transits this server.
+
+| Query | Response |
+|---|---|
+| *(none)* | `307` to the signed storage URL. |
+| `?mode=json` | The URL as data: `url`, `is_signed_url`, `expires_at`, `file_name`, `mime_type`, `size_bytes`, `sha256`. |
+
+**This endpoint requires the caller's bearer token, so a browser cannot reach it
+from an anchor, `window.open`, or an `<iframe>` — those navigations carry no
+Authorization header and are answered `401`.** A client fetches `?mode=json`
+with the token and then navigates to the returned `url`, which carries its own
+credential. `POST /networks/:id/reports` and `POST /networks/:id/evidence-bundle`
+return that same link as `file_url` on the artefact they just created, so the
+common path needs no second call. List responses omit it rather than signing
+every row on every page load. See
+`local_docs/FE_Revision_for_coordinatex_network_pdf.md`.
+
+Every form of the response carries `X-Content-SHA256`, so a recipient can verify
+the download against what was recorded without a second request.
 
 ---
 

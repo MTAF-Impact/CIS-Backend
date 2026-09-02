@@ -51,11 +51,19 @@ func main() {
 		log.Fatalf("migration error: %v", err)
 	}
 
+	// Two buckets: operator-uploaded policy documents, and the generated
+	// coordinated-network evidence a browser downloads by signed URL. See
+	// config.StorageConfig for why they are kept apart.
 	store, err := storage.New(cfg.Storage)
 	if err != nil {
 		log.Fatalf("storage error: %v", err)
 	}
-	log.Printf("[boot] storage driver: %s", store.Driver())
+	reportStore, err := storage.NewForBucket(cfg.Storage, cfg.Storage.SupabaseReportBucket)
+	if err != nil {
+		log.Fatalf("report storage error: %v", err)
+	}
+	log.Printf("[boot] storage driver: %s (documents: %s, reports: %s)",
+		store.Driver(), store.Bucket(), reportStore.Bucket())
 
 	ai := aiclient.New(cfg.AI)
 	if ai.Enabled() {
@@ -96,7 +104,7 @@ func main() {
 	// serves — the document and the screen must not be able to disagree.
 	networkSvc := service.NewNetworkService(networkRepo, claimRepo, policyRepo, settingSvc)
 	allowlistSvc := service.NewAllowlistService(allowlistRepo, networkRepo, reportRepo)
-	reportSvc := service.NewReportService(networkRepo, reportRepo, networkSvc, settingSvc, store, cfg.App)
+	reportSvc := service.NewReportService(networkRepo, reportRepo, networkSvc, settingSvc, reportStore, cfg.App)
 	detectionSvc := service.NewDetectionService(networkRepo, claimRepo, settingSvc, allowlistSvc, ai)
 
 	handlers := router.Handlers{

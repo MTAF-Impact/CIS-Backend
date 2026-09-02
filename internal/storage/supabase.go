@@ -15,11 +15,13 @@ import (
 	"github.com/cis/cis-backend/internal/config"
 )
 
-// Supabase stores policy documents in a Supabase Storage bucket over its REST
-// API, authenticating with the service-role key.
+// Supabase stores files in one Supabase Storage bucket over its REST API,
+// authenticating with the service-role key.
 //
 // The service-role key bypasses row-level security, so it must only ever live
-// in server-side environment variables — never in a client bundle.
+// in server-side environment variables — never in a client bundle. What reaches
+// a browser is a signed URL: time-limited, scoped to one object, and carrying
+// no credential that opens anything else.
 type Supabase struct {
 	baseURL    string
 	serviceKey string
@@ -28,16 +30,25 @@ type Supabase struct {
 	client     *http.Client
 }
 
-// NewSupabase constructs the Supabase Storage driver.
-func NewSupabase(cfg config.StorageConfig) (*Supabase, error) {
+// NewSupabase constructs the Supabase Storage driver for one bucket.
+func NewSupabase(cfg config.StorageConfig, bucket string) (*Supabase, error) {
 	if cfg.SupabaseURL == "" || cfg.SupabaseServiceKey == "" {
 		return nil, fmt.Errorf("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for the supabase storage driver")
 	}
+	if bucket == "" {
+		return nil, fmt.Errorf("a supabase storage bucket name is required")
+	}
+
+	ttl := cfg.SignedURLTTL
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+
 	return &Supabase{
 		baseURL:    strings.TrimRight(cfg.SupabaseURL, "/"),
 		serviceKey: cfg.SupabaseServiceKey,
-		bucket:     cfg.SupabaseBucket,
-		signTTL:    cfg.SignedURLTTL,
+		bucket:     bucket,
+		signTTL:    ttl,
 		// No client-side timeout: US40 allows arbitrarily large policy
 		// documents, and a fixed deadline would truncate a slow large upload.
 		// Cancellation is driven by the request context instead.
@@ -47,6 +58,9 @@ func NewSupabase(cfg config.StorageConfig) (*Supabase, error) {
 
 // Driver names the implementation.
 func (s *Supabase) Driver() string { return "supabase" }
+
+// Bucket names the container this instance writes to.
+func (s *Supabase) Bucket() string { return s.bucket }
 
 func (s *Supabase) objectURL(action, path string) string {
 	return fmt.Sprintf("%s/storage/v1/object/%s/%s/%s",
@@ -89,29 +103,34 @@ func (s *Supabase) Upload(ctx context.Context, path string, r io.Reader, size in
 }
 
 // SignedURL asks Supabase for a time-limited download link.
-func (s *Supabase) SignedURL(ctx context.Context, path string) (string, bool, error) {
+//
+// The expiry is computed here rather than parsed back out of the token, because
+// the caller's use for it is to tell a browser how long the link it was handed
+// stays good — and a client-side clock reading a token it cannot verify would
+// be no more accurate than this.
+func (s *Supabase) SignedURL(ctx context.Context, path string) (string, time.Time, bool, error) {
 	endpoint := s.objectURL("sign", path)
 
 	body, err := json.Marshal(map[string]any{"expiresIn": int(s.signTTL.Seconds())})
 	if err != nil {
-		return "", false, err
+		return "", time.Time{}, false, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", false, fmt.Errorf("build sign request: %w", err)
+		return "", time.Time{}, false, fmt.Errorf("build sign request: %w", err)
 	}
 	s.setAuth(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := s.client.Do(req)
 	if err != nil {
-		return "", false, fmt.Errorf("sign supabase object: %w", err)
+		return "", time.Time{}, false, fmt.Errorf("sign supabase object: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return "", false, fmt.Errorf("supabase storage sign failed: %s", describeError(res))
+		return "", time.Time{}, false, fmt.Errorf("supabase storage sign failed: %s", describeError(res))
 	}
 
 	var payload struct {
@@ -119,7 +138,7 @@ func (s *Supabase) SignedURL(ctx context.Context, path string) (string, bool, er
 		SignedUrl string `json:"signedUrl"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
-		return "", false, fmt.Errorf("decode sign response: %w", err)
+		return "", time.Time{}, false, fmt.Errorf("decode sign response: %w", err)
 	}
 
 	signed := payload.SignedURL
@@ -127,13 +146,15 @@ func (s *Supabase) SignedURL(ctx context.Context, path string) (string, bool, er
 		signed = payload.SignedUrl
 	}
 	if signed == "" {
-		return "", false, fmt.Errorf("supabase returned an empty signed URL")
+		return "", time.Time{}, false, fmt.Errorf("supabase returned an empty signed URL")
 	}
+
+	expiresAt := time.Now().UTC().Add(s.signTTL)
 	// Supabase returns a storage-relative path; make it absolute.
 	if strings.HasPrefix(signed, "/") {
-		return s.baseURL + "/storage/v1" + signed, true, nil
+		return s.baseURL + "/storage/v1" + signed, expiresAt, true, nil
 	}
-	return s.baseURL + "/storage/v1/" + signed, true, nil
+	return s.baseURL + "/storage/v1/" + signed, expiresAt, true, nil
 }
 
 // Download streams an object out of the bucket.

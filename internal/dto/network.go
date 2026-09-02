@@ -788,7 +788,39 @@ type ReportView struct {
 
 	GeneratedBy *string   `json:"generated_by"`
 	GeneratedAt time.Time `json:"generated_at"`
-	DownloadURL string    `json:"download_url"`
+
+	// DownloadURL is this API's endpoint for the artefact. It requires the
+	// caller's bearer token, so a browser cannot follow it from an anchor or a
+	// new tab — fetch it with `?mode=json` to obtain FileURL instead.
+	DownloadURL string `json:"download_url"`
+
+	// FileURL is a time-limited link straight to object storage, safe to open
+	// in a tab because it carries its own credential in the query string.
+	// Populated only where signing one URL is cheap: the response to generating
+	// an artefact, and the download endpoint. It is empty in list responses,
+	// which would otherwise sign every row on every page load.
+	FileURL   string     `json:"file_url,omitempty"`
+	ExpiresAt *time.Time `json:"file_url_expires_at,omitempty"`
+}
+
+// ReportDownload tells a client where to fetch one generated artefact (US58).
+//
+// Returned by `GET /api/v1/reports/:reportId/file?mode=json`. The split exists
+// because the bytes live in object storage and the authorization lives here: a
+// browser cannot attach a bearer token to a navigation, so it asks this
+// endpoint — with the token — for a URL it can navigate to without one.
+type ReportDownload struct {
+	ReportID  string `json:"report_id"`
+	FileName  string `json:"file_name"`
+	MimeType  string `json:"mime_type"`
+	SizeBytes int64  `json:"size_bytes"`
+	// SHA256 is what cis_network_reports recorded at generation, so a recipient
+	// can verify the download without a second request.
+	SHA256 string `json:"sha256"`
+
+	URL         string     `json:"url"`
+	IsSignedURL bool       `json:"is_signed_url"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
 
 // AuditLogEntry is one export audit record (US64).

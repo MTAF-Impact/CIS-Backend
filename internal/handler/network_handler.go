@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"math"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -297,28 +298,59 @@ func (h *NetworkHandler) EvidenceBundle(c *fiber.Ctx) error {
 }
 
 // DownloadReport handles GET /api/v1/reports/:reportId/file (US58).
+//
+// The artefact lives in Supabase Storage, so by default this redirects to a
+// time-limited signed URL and the bytes never transit this server.
+//
+// Pass `?mode=json` to receive that URL as data instead. A browser cannot put
+// an Authorization header on a navigation, so a client that opens this path in
+// a tab is refused — the working sequence is an authenticated JSON request
+// here, followed by a navigation to the returned `url`. See
+// local_docs/FE_Revision_for_coordinatex_network_pdf.md.
 func (h *NetworkHandler) DownloadReport(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "reportId")
 	if err != nil {
 		return err
 	}
 
-	row, reader, err := h.reports.Download(c.UserContext(), id)
+	mode := strings.ToLower(strings.TrimSpace(c.Query("mode")))
+	meta, body, err := h.reports.Download(c.UserContext(), id)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = reader.Close() }()
 
-	contentType := "application/pdf"
-	if strings.HasSuffix(row.FileName, ".zip") {
-		contentType = "application/zip"
+	// The digest travels with every form of the response so a recipient can
+	// verify the file against what cis_network_reports recorded without a
+	// second request.
+	c.Set("X-Content-SHA256", meta.SHA256)
+
+	// The store signed the object, so there is nothing here to stream.
+	if body == nil {
+		if mode == "json" {
+			return response.OK(c, "report download", meta)
+		}
+		return c.Redirect(meta.URL, fiber.StatusTemporaryRedirect)
 	}
-	c.Set(fiber.HeaderContentType, contentType)
-	c.Set(fiber.HeaderContentDisposition, `attachment; filename="`+row.FileName+`"`)
-	// The digest travels with the download so a recipient can verify the file
-	// against what cis_network_reports recorded without a second request.
-	c.Set("X-Content-SHA256", row.FileSHA256)
-	return c.SendStream(reader, int(row.FileSize))
+
+	// The driver cannot sign (local disk in development), so the bytes are
+	// proxied instead.
+	if mode == "json" {
+		_ = body.Close()
+		meta.URL = c.Path()
+		meta.IsSignedURL = false
+		return response.OK(c, "report download", meta)
+	}
+
+	c.Set(fiber.HeaderContentType, meta.MimeType)
+	c.Set(fiber.HeaderContentDisposition, `attachment; filename="`+sanitizeHeaderValue(meta.FileName)+`"`)
+
+	// body is deliberately NOT closed here: SendStream hands the reader to
+	// fasthttp, which writes it after this handler returns and closes it
+	// itself. Closing it now would truncate the response to zero bytes.
+	if meta.SizeBytes > 0 && meta.SizeBytes <= math.MaxInt32 {
+		return c.SendStream(body, int(meta.SizeBytes))
+	}
+	return c.SendStream(body)
 }
 
 // currentUser packages the caller's identity for the export artefacts.

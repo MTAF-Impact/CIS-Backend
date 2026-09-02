@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,15 @@ import (
 // here, in the service layer, and not in the UI — PRD 10.9.1 rule 4 makes human
 // review before escalation a governance requirement, and a rule enforced only
 // in a form is a rule that a second client does not have.
+//
+// # Where the files live
+//
+// store is bound to the coordinated-network bucket (SUPABASE_REPORT_BUCKET,
+// default "coordinated-network-pdf"), separate from the bucket holding F2's
+// uploaded policy documents. Downloads are handed to the browser as signed URLs
+// pointing at that bucket rather than proxied through this API: the artefacts
+// are large, the container is stateless, and a navigation cannot carry a bearer
+// token — which is exactly the failure a proxied download produces.
 type ReportService struct {
 	networks  *repository.NetworkRepository
 	reports   *repository.ReportRepository
@@ -47,7 +57,8 @@ type ReportService struct {
 	appConfig config.AppConfig
 }
 
-// NewReportService constructs a ReportService.
+// NewReportService constructs a ReportService. store must be the
+// coordinated-network artefact bucket, not the policy-document one.
 func NewReportService(
 	networks *repository.NetworkRepository,
 	reports *repository.ReportRepository,
@@ -158,7 +169,27 @@ func (s *ReportService) Generate(
 	}
 
 	view := toReportView(*row)
+	s.attachSignedURL(ctx, &view, row.FilePath)
 	return &view, nil
+}
+
+// attachSignedURL fills the view's direct-download link, best effort.
+//
+// A signing failure is logged and dropped rather than failing the request: the
+// artefact is generated, recorded and downloadable through the API endpoint, so
+// refusing the whole response over a missing convenience link would discard
+// work that succeeded. The client falls back to DownloadURL.
+func (s *ReportService) attachSignedURL(ctx context.Context, view *dto.ReportView, path string) {
+	signed, expiresAt, ok, err := s.store.SignedURL(ctx, path)
+	if err != nil {
+		log.Printf("[report] could not sign %s, returning the API download path only: %v", view.ID, err)
+		return
+	}
+	if !ok {
+		return
+	}
+	view.FileURL = signed
+	view.ExpiresAt = &expiresAt
 }
 
 // resolveSections applies US59's toggles, with its one non-negotiable.
@@ -334,21 +365,92 @@ func (s *ReportService) ListReports(ctx context.Context, networkID uuid.UUID) ([
 	return out, nil
 }
 
-// Download streams a stored report (US58: stored, versioned, re-downloadable).
-func (s *ReportService) Download(ctx context.Context, reportID uuid.UUID) (*models.CISNetworkReport, io.ReadCloser, error) {
-	row, err := s.reports.FindReport(ctx, reportID)
+// Download resolves a stored artefact for delivery (US58: stored, versioned,
+// re-downloadable).
+//
+// It returns metadata and, when the store can sign, a URL the browser fetches
+// directly from object storage — the reader is nil in that case and the file
+// never transits this server. Only a driver that cannot sign (local disk, in
+// development) produces a reader for the caller to proxy.
+func (s *ReportService) Download(
+	ctx context.Context, reportID uuid.UUID,
+) (*dto.ReportDownload, io.ReadCloser, error) {
+	row, err := s.findReport(ctx, reportID)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, nil, apperr.NotFound("report not found")
-		}
-		return nil, nil, apperr.Internal("could not load the report").Wrap(err)
+		return nil, nil, err
+	}
+
+	meta := &dto.ReportDownload{
+		ReportID:  row.ID.String(),
+		FileName:  row.FileName,
+		MimeType:  reportMimeType(row.FileName),
+		SizeBytes: row.FileSize,
+		SHA256:    row.FileSHA256,
+	}
+
+	signed, expiresAt, ok, err := s.store.SignedURL(ctx, row.FilePath)
+	if err != nil {
+		return nil, nil, apperr.Internal("could not prepare the download").Wrap(err)
+	}
+	if ok {
+		meta.URL = signed
+		meta.IsSignedURL = true
+		meta.ExpiresAt = &expiresAt
+		return meta, nil, nil
 	}
 
 	reader, err := s.store.Download(ctx, row.FilePath)
 	if err != nil {
 		return nil, nil, apperr.Internal("could not read the stored report").Wrap(err)
 	}
-	return row, reader, nil
+	return meta, reader, nil
+}
+
+// findReport loads one artefact row, translating a missing one into a 404.
+func (s *ReportService) findReport(ctx context.Context, reportID uuid.UUID) (*models.CISNetworkReport, error) {
+	row, err := s.reports.FindReport(ctx, reportID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NotFound("report not found")
+		}
+		return nil, apperr.Internal("could not load the report").Wrap(err)
+	}
+	return row, nil
+}
+
+// readReport streams an artefact's bytes back into this process.
+//
+// Distinct from Download, which prefers to hand the client a signed URL. The
+// evidence bundle needs the PDF itself to place inside the ZIP, so it takes
+// this path regardless of what the driver can sign.
+func (s *ReportService) readReport(
+	ctx context.Context, reportID uuid.UUID,
+) (*models.CISNetworkReport, []byte, error) {
+	row, err := s.findReport(ctx, reportID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	reader, err := s.store.Download(ctx, row.FilePath)
+	if err != nil {
+		return nil, nil, apperr.Internal("could not read the stored report").Wrap(err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, nil, apperr.Internal("could not read the stored report").Wrap(err)
+	}
+	return row, data, nil
+}
+
+// reportMimeType maps a generated artefact's filename to its content type. The
+// two produced by this service are the PDF report and the evidence-bundle ZIP.
+func reportMimeType(filename string) string {
+	if strings.HasSuffix(strings.ToLower(filename), ".zip") {
+		return "application/zip"
+	}
+	return "application/pdf"
 }
 
 // EvidenceBundle produces US60's machine-readable ZIP.
@@ -386,15 +488,9 @@ func (s *ReportService) EvidenceBundle(
 	if err != nil {
 		return nil, err
 	}
-	pdfRow, pdfReader, err := s.Download(ctx, uuid.MustParse(pdfView.ID))
+	pdfRow, pdfBytes, err := s.readReport(ctx, uuid.MustParse(pdfView.ID))
 	if err != nil {
 		return nil, err
-	}
-	defer func() { _ = pdfReader.Close() }()
-
-	pdfBytes, err := io.ReadAll(pdfReader)
-	if err != nil {
-		return nil, apperr.Internal("could not read the generated report").Wrap(err)
 	}
 
 	bundleID := uuid.New()
@@ -475,6 +571,7 @@ func (s *ReportService) EvidenceBundle(
 	}
 
 	view := toReportView(bundleRow)
+	s.attachSignedURL(ctx, &view, bundleRow.FilePath)
 	return &view, nil
 }
 

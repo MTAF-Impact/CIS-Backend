@@ -1,12 +1,16 @@
 package storage
 
 import (
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/cis/cis-backend/internal/config"
 )
 
 func TestValidateDocument(t *testing.T) {
@@ -75,6 +79,74 @@ func TestBuildObjectPath(t *testing.T) {
 		}
 		if strings.Contains(got, "..") {
 			t.Errorf("BuildObjectPath(%q) produced a traversal path: %q", tc.filename, got)
+		}
+	}
+}
+
+// TestNewForBucketRequiresName guards the wiring: a driver with no bucket would
+// write to a path the object store resolves however it likes, so it is refused
+// at construction rather than at the first upload.
+func TestNewForBucketRequiresName(t *testing.T) {
+	cfg := config.StorageConfig{
+		Driver:   "local",
+		LocalDir: filepath.Join(t.TempDir(), "uploads"),
+	}
+	for _, bucket := range []string{"", "   "} {
+		if _, err := NewForBucket(cfg, bucket); err == nil {
+			t.Errorf("NewForBucket(%q) succeeded, want an error", bucket)
+		}
+	}
+}
+
+// TestLocalBucketsAreIsolated checks that two buckets writing the same path do
+// not collide on the local driver, the way they do not collide in Supabase.
+//
+// This is what lets a report and a policy document share a key shape without
+// one overwriting the other in development but not in production — a class of
+// bug that only appears after deploy.
+func TestLocalBucketsAreIsolated(t *testing.T) {
+	cfg := config.StorageConfig{Driver: "local", LocalDir: t.TempDir()}
+
+	docs, err := NewForBucket(cfg, "policy-documents")
+	if err != nil {
+		t.Fatalf("policy bucket: %v", err)
+	}
+	reports, err := NewForBucket(cfg, "coordinated-network-pdf")
+	if err != nil {
+		t.Fatalf("report bucket: %v", err)
+	}
+
+	const path = "networks/shared/file.pdf"
+	ctx := context.Background()
+	if _, err := docs.Upload(ctx, path, strings.NewReader("document"), 8, "application/pdf"); err != nil {
+		t.Fatalf("upload to policy bucket: %v", err)
+	}
+	if _, err := reports.Upload(ctx, path, strings.NewReader("report"), 6, "application/pdf"); err != nil {
+		t.Fatalf("upload to report bucket: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		store Storage
+		want  string
+	}{
+		{"policy-documents", docs, "document"},
+		{"coordinated-network-pdf", reports, "report"},
+	} {
+		body, err := tc.store.Download(ctx, path)
+		if err != nil {
+			t.Fatalf("download from %s: %v", tc.name, err)
+		}
+		got, err := io.ReadAll(body)
+		_ = body.Close()
+		if err != nil {
+			t.Fatalf("read from %s: %v", tc.name, err)
+		}
+		if string(got) != tc.want {
+			t.Errorf("%s holds %q, want %q — the buckets share a directory", tc.name, got, tc.want)
+		}
+		if tc.store.Bucket() != tc.name {
+			t.Errorf("Bucket() = %q, want %q", tc.store.Bucket(), tc.name)
 		}
 	}
 }

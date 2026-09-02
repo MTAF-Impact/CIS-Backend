@@ -25,14 +25,19 @@ cd CIS-Backend
 go mod download
 ```
 
-## Step 2 — Create the Supabase Storage bucket
+## Step 2 — Create the Supabase Storage buckets
 
-Policy documents (US40) are stored in Supabase Storage.
+Two buckets, because the files differ in kind: uploaded policy documents (US40)
+and generated coordinated-network evidence about named accounts (US58, US60).
+Separating them means the evidence bucket's access policy and retention can be
+tightened without touching the documents an operator uploaded.
+
+For **each** of `policy-documents` and `coordinated-network-pdf`:
 
 1. Supabase dashboard → **Storage** → **New bucket**
-2. Name it `policy-documents`
+2. Name it exactly as above
 3. Leave it **private** — the backend serves files through time-limited signed
-   URLs, so the bucket must not be public
+   URLs, so neither bucket may be public
 4. Create
 
 ## Step 3 — Collect your credentials
@@ -74,6 +79,7 @@ JWT_SECRET=<the value you just generated>
 SUPABASE_URL=https://<ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service_role key>
 SUPABASE_STORAGE_BUCKET=policy-documents
+SUPABASE_REPORT_BUCKET=coordinated-network-pdf
 
 # Creates your first login on boot
 SEED_USER_EMAIL=admin@yourcity.go.id

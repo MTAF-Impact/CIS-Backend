@@ -7,37 +7,47 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cis/cis-backend/internal/config"
 )
 
-// Local stores policy documents on the filesystem.
+// Local stores files on the filesystem, one directory per bucket.
 //
 // Intended for development only: files written here are lost when a container
 // restarts unless the directory is a persisted volume, and the API cannot scale
 // beyond a single instance. Production should use the Supabase driver.
 type Local struct {
-	dir string
+	dir    string
+	bucket string
 }
 
-// NewLocal constructs the local-disk driver, creating its root directory.
-func NewLocal(cfg config.StorageConfig) (*Local, error) {
+// NewLocal constructs the local-disk driver for one bucket, creating its
+// directory under STORAGE_LOCAL_DIR.
+func NewLocal(cfg config.StorageConfig, bucket string) (*Local, error) {
 	dir := cfg.LocalDir
 	if dir == "" {
 		dir = "./uploads"
 	}
-	abs, err := filepath.Abs(dir)
+	if bucket == "" {
+		return nil, fmt.Errorf("a storage bucket name is required")
+	}
+
+	abs, err := filepath.Abs(filepath.Join(dir, bucket))
 	if err != nil {
 		return nil, fmt.Errorf("resolve storage directory: %w", err)
 	}
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return nil, fmt.Errorf("create storage directory: %w", err)
 	}
-	return &Local{dir: abs}, nil
+	return &Local{dir: abs, bucket: bucket}, nil
 }
 
 // Driver names the implementation.
 func (l *Local) Driver() string { return "local" }
+
+// Bucket names the directory this instance writes to.
+func (l *Local) Bucket() string { return l.bucket }
 
 // resolve maps a storage path to an absolute filesystem path, refusing any
 // path that would escape the storage root.
@@ -79,8 +89,8 @@ func (l *Local) Upload(ctx context.Context, path string, r io.Reader, _ int64, m
 }
 
 // SignedURL reports that this driver cannot sign, so callers stream instead.
-func (l *Local) SignedURL(context.Context, string) (string, bool, error) {
-	return "", false, nil
+func (l *Local) SignedURL(context.Context, string) (string, time.Time, bool, error) {
+	return "", time.Time{}, false, nil
 }
 
 // Download opens a stored file.

@@ -298,7 +298,7 @@ func (s *PolicyService) runMatchmaking(ctx context.Context, policyID uuid.UUID, 
 
 	// Give the AI service a signed link to read the document rather than
 	// shipping bytes over the wire.
-	documentURL, _, signErr := s.store.SignedURL(ctx, row.FilePath)
+	documentURL, _, _, signErr := s.store.SignedURL(ctx, row.FilePath)
 	if signErr != nil {
 		log.Printf("[policy] could not sign document for %s, continuing without it: %v", policyID, signErr)
 	}
@@ -618,15 +618,14 @@ func (s *PolicyService) Download(ctx context.Context, id uuid.UUID) (*dto.Downlo
 		SizeBytes: row.FileSizeBytes,
 	}
 
-	signed, ok, err := s.store.SignedURL(ctx, row.FilePath)
+	signed, expiresAt, ok, err := s.store.SignedURL(ctx, row.FilePath)
 	if err != nil {
 		return nil, nil, apperr.Internal("could not prepare the download").Wrap(err)
 	}
 	if ok {
-		expiry := time.Now().UTC().Add(time.Hour)
 		meta.URL = signed
 		meta.IsSignedURL = true
-		meta.ExpiresAt = &expiry
+		meta.ExpiresAt = &expiresAt
 		return meta, nil, nil
 	}
 
