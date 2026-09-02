@@ -96,11 +96,17 @@ malformed `ai_policy_id` · `400 VALIDATION_FAILED` invalid `status`.
 The detector's two exclusion lists, read by the pipeline before candidate
 selection (PRD 10.5.1, 10.5.2.2).
 
-**This is the one place the read direction reverses.** Everywhere else the
-backend reads AI-owned tables; here the AI service reads a backend-owned one.
-The declared-coordination allowlist and the common-phrase list record human
+**This is the one place the read direction *could* reverse.** Everywhere else the
+backend reads AI-owned tables; here the AI service would read a backend-owned
+one. The declared-coordination allowlist and the common-phrase list record human
 decisions — which is why they live in `cis_*` tables — but they are inputs to
 the pipeline, not outputs of it.
+
+In practice it does not reverse: the pipeline reads both lists off the Flow 7
+request body and **nothing calls this route today**. That is what lets the
+ownership rule hold with no exception in either direction. The route stays
+because it costs nothing, and because it is the surface that makes the split
+legible.
 
 ```bash
 curl http://localhost:8080/api/v1/internal/detection/exclusions
@@ -130,10 +136,10 @@ entries are excluded — only active ones are returned.
 content duplication. Without them a shared campaign hashtag reads as
 coordination, which is exactly how a detector accuses a genuine campaign.
 
-**Pulling this is optional.** The backend also *sends* both lists inside every
-detection-run request (Flow 7), so a pipeline that uses the request payload never
-needs to call this. It exists for a pipeline that would rather pull them at
-its own cadence, and as the surface that makes the ownership split legible.
+**Pulling this is optional, and currently unused.** The backend also *sends* both
+lists inside every detection-run request (Flow 7), and the AI pipeline reads them
+from there. This route remains available for a pipeline that would rather pull
+them at its own cadence.
 
 ---
 

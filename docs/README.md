@@ -53,12 +53,15 @@ response envelope, error codes, auth, and shared query parameters.
   team's DDL, for bootstrapping a **local** database only. Never executed by the
   app; never run it against shared Supabase.
 - [sql/01_f5_reference_schema.sql](sql/01_f5_reference_schema.sql) — the same,
-  for F5's detection pipeline tables. Columns marked `BEYOND 10.10` are this
-  backend's proposal and still need AI-team sign-off.
+  for F5's detection pipeline tables. Columns marked `BEYOND 10.10` were this
+  backend's proposal; the AI team has signed off and adopted them as written, and
+  its pipeline now matches this file column for column.
 - [sql/02_f6_reference_schema.sql](sql/02_f6_reference_schema.sql) — the PRD
   v1.5 AI-side additions: `content_items.sentiment`, `content_items.city`, and
   the `claim_debunk_segments` table. All three are optional; the file documents
-  exactly how the backend degrades without each.
+  exactly how the backend degrades without each. `sentiment` and
+  `claim_debunk_segments` have shipped; `city` is deferred until a second city is
+  configured, so its documented degradation is the steady state.
 
 ---
 

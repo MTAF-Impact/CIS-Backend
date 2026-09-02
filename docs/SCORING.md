@@ -77,6 +77,14 @@ urgency of spread. Emotional Intensity is weighted lowest at 0.10.
 These are returned as `weights` in every `score_breakdown` so the UI can explain
 the ranking without hardcoding constants.
 
+**When F is `null`, the AI service drops its weight and renormalises the other
+four over 0.70** rather than substituting `0`, which would assert "confirmed
+true" and depress every claim in the bank. The `weights` this backend publishes
+are the nominal five above, so on a claim with no F they describe the formula
+rather than that claim's own arithmetic. Given the `official_sources` corpus is
+currently empty — see **Score Transparency Requirement** below — that is the
+common case, not the exception.
+
 ---
 
 ## Net Pushback Ratio (PRD 6.4)
@@ -149,8 +157,18 @@ of statistically unreliable data.
 object. **The final number is never serialized without its inputs** — that is
 the requirement, and it is why the breakdown is not a separate endpoint.
 
-A `null` value means the AI service has not computed it yet. It is not zero, and
-the UI should not render it as such.
+A `null` value means the AI service has not computed it. It is not zero, and the
+UI should not render it as such.
+
+**Expect `F` to be `null` on essentially every claim, indefinitely.** Falseness
+is a similarity match against the AI service's `official_sources` corpus, and
+that corpus is empty — no fact-check or official-statement documents have been
+loaded into this deployment. The AI service leaves `F` `null` rather than `0`
+precisely because `0` would assert "confirmed true", and drops F's 0.30 weight
+from `claim_score`, renormalising the remaining four so the composite is not
+systematically depressed. So a claim with `falseness_score: null` still has a
+correct `claim_score`; it is scored on R, V, H and EI alone. This is the
+designed behaviour, not a pipeline that has fallen behind.
 
 Two additions in v1.5 sit on the same object:
 

@@ -145,7 +145,7 @@ RiskLoad       = Σ(FinalClaimScore_i × Volume_i) / total, for claims scoring �
 |---|---|
 | `ok` | Computed. `score` and the components are populated. |
 | `insufficient_data` | Fewer than `minimum_volume` content items in the window. PRD 6.6.3 requires this rather than a falsely calm score from low engagement. |
-| `unavailable` | The AI service has not provisioned per-item sentiment yet. See [sql/02_f6_reference_schema.sql](../sql/02_f6_reference_schema.sql). |
+| `unavailable` | `content_items.sentiment` is absent from this database. The AI service ships the column and writes it on every ingestion path, so this now indicates a database that predates that, not an outstanding AI-side gap. See [sql/02_f6_reference_schema.sql](../sql/02_f6_reference_schema.sql). |
 
 `score` is `null` unless `status` is `ok`. `reason` carries a sentence the UI
 can show directly. **O1a, O2 and O3 are unaffected by a non-`ok` status** —
@@ -185,10 +185,16 @@ pages.
 
 ### `city.partitioned`
 
-`false` means the AI service does not yet tag content with a city, so the F4
+`false` means the AI service does not tag content with a city, so the F4
 selection **labels** this instance rather than filtering it. Surfaced rather
 than hidden: a leadership page must not imply a city breakdown the data cannot
-support. See [sql/02_f6_reference_schema.sql](../sql/02_f6_reference_schema.sql).
+support.
+
+**Expect `false` for now.** The AI team has deferred `content_items.city`
+deliberately until a second city is configured, on the grounds that partitioning
+on a column that would only ever hold `Jakarta` buys nothing — consistent with
+PRD 6.6.4 scoping this phase to one city at a time. See
+[sql/02_f6_reference_schema.sql](../sql/02_f6_reference_schema.sql).
 
 ---
 

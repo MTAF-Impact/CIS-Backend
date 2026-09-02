@@ -279,11 +279,11 @@ that at 3 tries, after which a manual `/rematch` is needed.
 Re-queues AI matchmaking, resetting the attempt counter. Use after a `failed`
 status.
 
-This sends `force: true` to the AI service, asking it to genuinely re-run the
-pipeline rather than re-report the previous run's counts — which for a failed
-run are typically `0, 0`. See [AI-INTEGRATION.md](../AI-INTEGRATION.md#force--please-honour-this):
-until the AI service honours the flag, a failed matchmaking cannot recover, and
-this button reports `completed` with the failed run's numbers.
+This sends `force: true` to the AI service, which genuinely re-runs the pipeline
+rather than re-reporting the previous run's counts — which for a failed run are
+typically `0, 0`. The prior correlations and predicted claim are superseded, not
+duplicated, and the policy keeps the same `ai_policy_id`. See
+[AI-INTEGRATION.md](../AI-INTEGRATION.md#force--honoured).
 
 **200 OK** — same body as `/processing`.
 
@@ -335,9 +335,8 @@ On success the backend, in order:
    same way `/rematch` does — so correlations catch up with the new file.
    Existing correlations are left as-is until the new job reports back.
 
-   The `force` flag carries the same caveat as `/rematch`: until the AI service
-   honours it, the replaced document is never read and correlations stay pinned
-   to the superseded file.
+   The AI service honours `force`, so the replaced document is fetched and read,
+   and the prior correlations are superseded once the new job reports back.
 
 **Errors** — `404 NOT_FOUND` unknown policy · `422 UNPROCESSABLE_ENTITY` wrong
 file format · `400 BAD_REQUEST` no `file` part · `409 CONFLICT` matchmaking is

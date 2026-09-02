@@ -69,3 +69,44 @@ func TestIsValidReviewStatus(t *testing.T) {
 		}
 	}
 }
+
+// Both jsonb-backed types must hand the driver a string, never a []byte.
+//
+// Regression test for the 500 on PUT /networks/{id}/status: under
+// PreferSimpleProtocol pgx interpolates a []byte argument as a bytea hex
+// literal, which Postgres rejects for a jsonb column with "invalid input
+// syntax for type json" (SQLSTATE 22P02).
+func TestJSONBValueIsStringNotBytes(t *testing.T) {
+	v, err := JSONB(`{"coordination_score":55.28}`).Value()
+	if err != nil {
+		t.Fatalf("JSONB.Value() error = %v", err)
+	}
+	s, ok := v.(string)
+	if !ok {
+		t.Fatalf("JSONB.Value() returned %T, want string", v)
+	}
+	if s != `{"coordination_score":55.28}` {
+		t.Errorf("JSONB.Value() = %q, want the document verbatim", s)
+	}
+
+	// An empty document still stores as SQL NULL.
+	if v, err := JSONB(nil).Value(); err != nil || v != nil {
+		t.Errorf("JSONB(nil).Value() = (%v, %v), want (nil, nil)", v, err)
+	}
+
+	v, err = StringList{"sy", "du"}.Value()
+	if err != nil {
+		t.Fatalf("StringList.Value() error = %v", err)
+	}
+	s, ok = v.(string)
+	if !ok {
+		t.Fatalf("StringList.Value() returned %T, want string", v)
+	}
+	if s != `["sy","du"]` {
+		t.Errorf("StringList.Value() = %q, want a JSON array", s)
+	}
+
+	if v, err := StringList(nil).Value(); err != nil || v != nil {
+		t.Errorf("StringList(nil).Value() = (%v, %v), want (nil, nil)", v, err)
+	}
+}

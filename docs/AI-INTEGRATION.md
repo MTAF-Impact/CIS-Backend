@@ -58,14 +58,25 @@ three.
 | 6 | Sample content generation / clustering | Backend → AI | The F4 "Generate sample data" button |
 | 7 | **Detection run (F5)** | Backend → AI | The detection tick, a velocity spike, or an analyst's "run detection" |
 | 8 | **Evidence snapshot purge (F5)** | Backend → AI | The nightly retention sweep |
-| — | **Exclusion lists (F5)** | AI → Backend | The pipeline reads the allowlist before candidate selection |
+| — | **Exclusion lists (F5)** | AI → Backend | *Optional fallback.* The exclusions already travel inline on Flow 7's body; the pipeline pulls this only if it would rather fetch them |
 
 Everything else is plain database reads.
 
-Flows 7 and 8 are **not yet implemented on the AI side.** The backend's half is
-complete and inert: with no pipeline deployed, F5's endpoints answer `503` and
-F1–F4 are unaffected. See Flow 7 below for the contract the AI service needs to
-satisfy.
+**All eight flows are now implemented on both sides.** Flows 7 and 8 landed on
+the AI side against this document's contract verbatim — `POST
+/api/v1/detection/runs` and `POST /api/v1/detection/snapshots/purge`, the ten
+tables in [sql/01_f5_reference_schema.sql](sql/01_f5_reference_schema.sql), the
+parameters persisted per run, and the exclusions read from the request body
+rather than from `cis_coordination_allowlist`. That last point closed the one
+place the read direction between the two services would have reversed: the
+pipeline never reads a `cis_*` table, so the ownership rule now holds with zero
+exceptions in either direction. See Flow 7 for what is still degraded, which is
+a *data* gap, not a missing flow.
+
+The `503` degradation described on [api/networks.md](api/networks.md) is
+therefore a cold-start state, not a steady one: the F5 tables are created by the
+AI service's own schema management, and F5 endpoints answer `503` only until
+that has run against the shared database.
 
 Every outbound call degrades gracefully: with `AI_SERVICE_URL` empty the backend
 runs normally, policies record `processing_status: "skipped"`, and every F4
@@ -121,6 +132,14 @@ recommendation per audience segment** affected by the claim. The generation and
 caching rules are unchanged — once, at claim creation, never on view — but the
 relation is now one-to-many, so it cannot be a column on `claims`.
 
+**Shipped on the AI side**, against the DDL below unchanged. The pipeline writes
+1–4 segments per Existing claim, inferred from the claim's supporting-side
+sample, ranked most-exposed first, generated in the same call site and under the
+same once-only guard as `activity_content` — and Flow 3's demo claim populates
+them too, since it runs through the same construction path. A generation failure
+leaves the set empty without invalidating `activity_content`, which is exactly
+the fallback this section already assumed.
+
 | Column | Expectation |
 |---|---|
 | `claim_id` | The Existing claim. Synthetic claims stay unsegmented. |
@@ -139,8 +158,8 @@ for the rest of the product.
 | Column | Used for |
 |---|---|
 | `stance` | **`supporting` / `opposing` / `neutral`** — drives both the NPR formula and the US12 Positive/Negative statement lists |
-| `sentiment` | **New in v1.5.** `positive` / `negative` / `neutral` — the Baseline Climate Sentiment half of the F6 Climate Sentiment Index (PRD 6.6.1) |
-| `city` | **New in v1.5.** The resolved city name, scoping every F6 metric to the city configured in F4 (US65) |
+| `sentiment` | **New in v1.5 · shipped.** `positive` / `negative` / `neutral` — the Baseline Climate Sentiment half of the F6 Climate Sentiment Index (PRD 6.6.1) |
+| `city` | **New in v1.5 · deferred by the AI team.** The resolved city name, scoping every F6 metric to the city configured in F4 (US65) |
 | `author_id` | Top 5 Accounts (US12). A handle like `@driver_jkt` is ideal. |
 | `impressions` | Ranks Top 5 Accounts |
 | `text`, `source`, `claim_id`, `created_at` | Statement lists |
@@ -163,6 +182,16 @@ must not be in the business of geocoding it.
 Both columns are **optional**: without `sentiment`, F6's O1 gauge reports
 `unavailable` and the rest of the page still works; without `city`, the F4
 selection labels the instance instead of partitioning it and the API says so.
+
+**Where each one actually stands.** `sentiment` is written on every ingestion
+path — single, batch and synthetic — assessed independently of `stance` exactly
+as this section asks, so O1's gauge computes. Rows ingested before it shipped
+carry `NULL`, which still counts toward the denominator as PRD 6.6.1 requires.
+`city` is **deliberately not implemented**: the AI team is holding it until a
+second city is actually configured, on the grounds that partitioning on a column
+that would only ever hold `Jakarta` buys nothing. So `city.partitioned` stays
+`false` and the F4 selection labels this instance — the documented degradation,
+now the expected steady state rather than a gap waiting to close.
 
 `stance` is the single most load-bearing field here. The PRD's "Positive
 Statements" and "Negative Statements" map to `supporting` and `opposing`;
@@ -224,34 +253,39 @@ Content-Type: application/json
 document rather than expecting bytes over the wire. It is absent if signing
 failed; the call still proceeds so you can work from the name alone.
 
-### `force` — please honour this
+### `force` — honoured
 
-**This is an ask on the AI service.** Today a repeat submission for a
-`policy_id` you already hold short-circuits: the pipeline does not re-run, and
-the previously persisted counts are re-reported as `completed`. That is the
-right default for a retried webhook, and wrong for the three cases the backend
-actually needs:
+**This was an ask on the AI service; it is now implemented.** The backend sends
+`force: true` on rematch and on a document replacement, and leaves it off for
+the retry sweep. Three cases, and what each now gets:
 
-| Backend action | What the operator asked for | What the short-circuit gives them |
+| Backend action | What the operator asked for | What happens |
 |---|---|---|
-| `POST /policies/:id/rematch` after a failure | Run matchmaking again | `completed` with the failed run's counts — usually `0, 0`. A failed matchmaking can never recover. |
-| `PUT /policies/:id/file` (replace the document) | Correlations against the **new** document | The new document is never read; correlations stay pinned to the superseded one. |
-| The retry sweep | Recover a lost callback | Correct as-is — this is the case the short-circuit is for. |
+| `POST /policies/:id/rematch` after a failure | Run matchmaking again | Re-runs. A failed matchmaking recovers. |
+| `PUT /policies/:id/file` (replace the document) | Correlations against the **new** document | Re-runs against the new document; the prior `claim_policies` rows and predicted claim are **superseded**, not duplicated. |
+| The retry sweep | Recover a lost callback | Short-circuits and re-reports the persisted counts, which is the whole point of leaving `force` off. |
 
-So the backend now sends `force: true` on rematch and on a document
-replacement, and leaves it off for the retry sweep. When `force` is set, please
-re-run the pipeline and **supersede** that policy's prior `claim_policies` rows
-and predicted claims rather than duplicating them. Until it is honoured the
-field is simply ignored — Pydantic drops unknown fields — so nothing breaks
-either way; the two operator actions above just keep not working.
+The AI service keys all of this on `policies.backend_policy_id`, so `Policy.id`
+— and therefore `ai_policy_id` — never changes across a re-run, and there is
+never a second `Policy` row for one `cis_policies.id`.
 
-### `callback_url` — optional, and worth honouring
+**One behaviour beyond what the backend asked for, worth knowing:** the AI
+service also re-runs *without* `force` when the previous run failed, tracked on
+a nullable `policies.last_matchmaking_error`. `NULL` means "never run, or the
+last run succeeded" and is the only state that short-circuits. So the retry
+sweep recovers a genuinely failed run on its own, cheaply, without the backend
+having to distinguish "lost callback" from "failed job" before deciding whether
+to set the flag.
+
+### `callback_url` — honoured
 
 Sent only when the backend's `BACKEND_PUBLIC_URL` is configured; omitted
-otherwise. Honouring it (falling back to your own `BACKEND_URL` when absent)
-makes one AI deployment serve several backend environments, and removes the
-highest-consequence unset-by-default variable in the whole integration — see
-the note under Configuration.
+otherwise. **The AI service now uses it as the full callback target as-is when
+present, and falls back to its own `BACKEND_URL` when absent** — so one AI
+deployment can serve staging and production without either one hardcoded on its
+side, and `BACKEND_URL` stops being the highest-consequence unset-by-default
+variable in the integration. Setting `BACKEND_PUBLIC_URL` here is now the
+simpler half of that fix; see the note under Configuration.
 
 Path: `pathMatchmaking` in `internal/aiclient/endpoints.go`.
 
@@ -394,13 +428,17 @@ topic, `first_caught_at`, positive/negative `content_items` with stances, a
 `content_items` set with `author_id` values for Top 5 Accounts, a `claim_policies`
 link, and a cached `activity_content` debunk draft.
 
-> **Open ask on the AI service:** everything on that list is produced today
-> **except the `claim_policies` link**. The generated claim's "Related Policies"
-> panel therefore renders empty — which is precisely one of the panels the demo
-> exists to exercise. Either link the generated claim to an existing policy
-> (nearest by embedding, or simply the most recent) or accept an optional
-> `policy_id` in this request body. If it is deliberately out of scope, say so
-> and this paragraph becomes the note explaining why the panel is empty.
+> **Closed.** The `claim_policies` link was the one item on that list the AI
+> service did not produce, leaving the "Related Policies" panel empty on exactly
+> the claim the demo exists to exercise. It now links the generated claim to the
+> nearest `Policy` by embedding cosine similarity, falling back to the most
+> recently created one, and no-ops only when no `Policy` exists at all. No
+> `policy_id` field was added to this request body — none is needed.
+
+The claim is built by the **same** construction and scoring pipeline real
+clustering uses, not a parallel "fake claim" path, so a demo claim carries a
+genuine score breakdown, stances, Top 5 Accounts, a cached debunk draft and (as
+of v1.5) its `claim_debunk_segments` rows.
 
 **This call is slow by design** — the AI service documents ~30–60s of sequential
 LLM calls — so it runs on `AI_SERVICE_LONG_TIMEOUT` (default `180s`), not the
@@ -561,10 +599,12 @@ Three details that are not arbitrary:
   what makes that true even if an admin edits the configuration while a run is in
   flight. Please persist them to `detection_run.parameters_json` verbatim.
 - **The exclusions travel with the request.** The declared-coordination allowlist
-  and the common-phrase list are backend-owned and pipeline-read — the one place
-  the read direction between the two services reverses. They are also fetchable
-  at `GET /api/v1/internal/detection/exclusions` if the pipeline would rather
-  pull them.
+  and the common-phrase list are backend-owned and pipeline-read. Sending them
+  inline is what keeps the ownership rule exception-free: the pipeline reads them
+  off the request body and never touches `cis_coordination_allowlist`, so there
+  is no AI → `cis_*` read anywhere in the integration. They remain fetchable at
+  `GET /api/v1/internal/detection/exclusions`, but that is a fallback nothing
+  currently calls.
 
 **A scope rule the backend already enforces, so the pipeline does not have to
 rediscover it:** detection never runs over Non-Existing/Synthetic claims
@@ -573,8 +613,57 @@ The on-demand endpoint rejects one with `422`, and the scheduled sweep filters o
 claim type as well as on status Active.
 
 What the pipeline must write is `docs/sql/01_f5_reference_schema.sql`. Columns
-marked **`BEYOND 10.10`** there are the backend's proposal for requirements
-Section 10 states but 10.10 declares no column for; they need AI-team sign-off.
+marked **`BEYOND 10.10`** there were the backend's proposal for requirements
+Section 10 states but 10.10 declares no column for.
+
+### Where Flow 7 actually stands
+
+**Implemented, against this contract verbatim.** The AI service pulled and
+reviewed this repo's merged code (`internal/aiclient/detection.go`,
+`internal/models/f5_ai_tables.go`, `docs/sql/01_f5_reference_schema.sql`) rather
+than working from a summary of it, and rebuilt its side to match: both endpoint
+paths, all ten tables with singular names and table-specific primary keys, the
+`BEYOND 10.10` columns **adopted as proposed** (that sign-off is done), and
+`detection_run.parameters` persisted verbatim per run so US62 holds.
+
+Three specifics the backend can rely on:
+
+- The `202 {"run_id", "status": "pending"}` ack is real: the `detection_run` row
+  is written **synchronously** before the response, so the id is immediately
+  queryable. The backend was already right not to poll.
+- A `claim_id` that does not resolve to an Existing claim is skipped inside its
+  own iteration. One bad id never fails the whole run.
+- A cluster that is ≥60% allowlisted is persisted with
+  `allowlist_suppressed = true` rather than dropped, so the audit trail stays
+  stable as the allowlist changes underneath it. Suppressing it on every surface
+  is the backend's to do, from a row that does not move.
+
+**What is degraded, and why it is a data gap rather than a missing flow.** The
+detection maths is complete; three of the five signal families have no inputs in
+today's `content_items`:
+
+| Family | State | Cause |
+|---|---|---|
+| `w_time` Synchrony | Computes, on the wrong clock | Runs on `content_items.created_at` — ingest time, not publish time. Ask #4 below. |
+| `w_amp` Co-amplification | Effectively always empty | No reshare / quote / reply / outbound-link fields exist. |
+| `w_meta` Provenance | Partial | `account.created_at_platform` and `profile_hash` are populated; `bio`, `declared_location` and `client_app` are columns nothing writes. |
+| `w_struct` Structural overlap | Always unavailable | No follower-graph source exists. |
+
+Each degrades honestly — reported as unavailable on
+`detection_run.signals_unavailable`, never faked as measured. The consequence is
+the one this document predicted: **two or more unavailable families cap every
+detected network at Medium confidence regardless of score**, so `high` is
+currently unreachable in production. F5's list, detail, review, report and audit
+surfaces all work; the recall behind them is known-incomplete.
+
+Four smaller gaps the backend renders around, all documented rather than silent:
+`network_evidence_post.shared_span_start`/`_end` are always `NULL` (no text-diff
+step yet, so no span highlighting), `coordinated_network.relabelled` is never set
+(neither side can write it under "no shared-table writes" — open question),
+`network_edge`'s per-signal weight columns are `NOT NULL DEFAULT 0` so an
+unavailable family reads as `0.0` per edge (`detection_run.signals_unavailable`
+is the run-level source of truth — also an open question), and comparison-role
+`network_account` rows carry no `layout_x`/`layout_y`.
 
 ## Flow 8 — Evidence snapshot purge (F5, PRD 10.9.1 rule 7)
 
@@ -595,6 +684,14 @@ platform, and a report whose evidence has been purged is worthless as evidence.
 
 So the backend selects the eligible snapshots and hands over the list. The rows
 are AI-owned, so the deletion itself is the pipeline's to perform.
+
+**Implemented as specified.** An earlier AI-side design had made this an age-only
+TTL, which would have dropped the "except reported" carve-out exactly as this
+section warned; the network-id-driven shape restored it. The deletion covers the
+evidence artefacts — posts, burst bins, edges, membership — and the
+`evidence_snapshot` row. `coordinated_network` itself is kept permanently, so a
+purged network still lists, still shows its scores, and still carries its review
+history; what is gone is the evidence behind it.
 
 ---
 
@@ -624,8 +721,10 @@ The callback route is a machine-to-machine endpoint — see
 
 ### Where the AI service's routes live
 
-Not in the environment. The seven paths the backend calls are constants in
-[`internal/aiclient/endpoints.go`](../internal/aiclient/endpoints.go):
+Not in the environment. The nine paths the backend calls are constants in
+[`internal/aiclient/endpoints.go`](../internal/aiclient/endpoints.go), except
+F5's two, which live next to the client that calls them in
+[`internal/aiclient/detection.go`](../internal/aiclient/detection.go):
 
 | Constant | Path | Flow |
 |---|---|---|
@@ -635,7 +734,13 @@ Not in the environment. The seven paths the backend calls are constants in
 | `pathRescore` | `POST /api/v1/claims/rescore` | 5 |
 | `pathGenerateContent` | `POST /api/v1/ingest/generate-synthetic` | 6 |
 | `pathClusterNow` | `POST /api/v1/claims/cluster-now` | 6b |
+| `pathDetectionRun` | `POST /api/v1/detection/runs` | 7 |
+| `pathDetectionPurge` | `POST /api/v1/detection/snapshots/purge` | 8 |
 | `pathHealth` | `GET /health` | — |
+
+All nine are confirmed against the AI service's own `API_REFERENCE.md` and
+`GO_INTEGRATION.md`, which number the flows identically — a flow number means the
+same thing in either repo.
 
 They are part of the *contract* between the two services, not properties of a
 deployment. A route moving is a code change on both sides — a new request or
@@ -658,12 +763,13 @@ listener. See [api/internal.md](api/internal.md).
 
 **AI service side:** just the backend's base URL.
 
-> **Deployment checklist, one line:** `BACKEND_URL` on the AI service is the
-> single highest-consequence unset-by-default variable in the integration. Unset,
-> Flow 2 is skipped entirely with only a log warning, and every policy sits on a
-> "Processing" badge until the backend's staleness sweep gives up after three
-> attempts. Setting it, or honouring the `callback_url` the backend now sends,
-> both fix it.
+> **Deployment checklist, one line:** *either* `BACKEND_URL` on the AI service
+> *or* `BACKEND_PUBLIC_URL` here must be set, and neither is by default. With
+> neither, Flow 2 is skipped entirely with only a log warning, and every policy
+> sits on a "Processing" badge until the backend's staleness sweep gives up after
+> three attempts. The AI service now honours the `callback_url` this backend
+> sends and prefers it over its own `BACKEND_URL`, so setting `BACKEND_PUBLIC_URL`
+> here is the half of the fix that is under this team's control.
 
 `/health/ready` reports the AI service as `{configured, reachable}` — a URL
 being set says nothing about anything listening on it. An unreachable AI service
@@ -698,7 +804,9 @@ Things the AI service should **never** do:
   nothing cascades: reviews, watchlist entries and snapshots are left pointing at
   claims that no longer exist, and policies keep a "completed" badge above empty
   claim lists. `POST /api/v1/admin/reconcile` cleans up after the fact; not
-  needing it is better.
+  needing it is better. **Both scripts now refuse to run** when they find any
+  `cis_%` table, unless explicitly overridden — so this is enforced on the AI
+  side rather than left to discipline.
 
 ### Duplicated state
 
@@ -719,34 +827,51 @@ See [DATABASE.md](DATABASE.md) for the full ownership matrix.
 
 ---
 
-## Open asks on the AI service
+## Asks on the AI service — current status
 
-Collected in one place, in priority order.
+The original ten asks, with where each one now stands. Eight are closed; the two
+that remain are the F5 data gap, which was always the hard one.
 
-| # | Ask | Why it matters |
+| # | Ask | Status |
 |---|---|---|
-| 1 | Honour `force` on Flow 1 (re-run and supersede, instead of short-circuiting) | Without it a failed matchmaking can never recover and replacing a policy document never updates its correlations. The backend already sends it. |
-| 2 | Create a `claim_policies` link for the Flow 3 demo claim | US33's "fully populated" requirement; the Related Policies panel is empty without it. |
-| 3 | Honour `callback_url` on Flow 1, falling back to `BACKEND_URL` | Lets one AI deployment serve several backend environments, and removes the highest-consequence unset-by-default variable. |
-| 4 | **`content_items.posted_at`** — when the account published, distinct from when we captured it | **The F5 blocker.** Every temporal signal depends on it. Today's table has only a capture time, so Synchrony cannot be computed at all — a whole signal family, and the one the PRD's own worked example leads with. |
-| 5 | **An `account` table** — durable platform account identity, with `created_at_platform`, `profile_hash`, bio, declared location and client/app string | Three of F5's five signals need a durable account entity. `content_items.author_id` is a string on a post, so Provenance and Automation have no source at all, and the allowlist has nothing stable to key on. |
-| 6 | Sign off (or amend) the `BEYOND 10.10` columns in `docs/sql/01_f5_reference_schema.sql` | Nine requirements stated in PRD Section 10 have no column in 10.10. The backend's proposals are in that file, each marked with its gap number. |
-| 7 | Implement Flow 7 and Flow 8 | Without them F5 has no data. Everything downstream — the read models, the review workflow, the report, the badge on F1 — is built and waiting. |
-| 8 | **`content_items.sentiment`** (v1.5) | The Baseline Climate Sentiment half of the F6 Climate Sentiment Index. Without it O1's gauge — the visual centrepiece of the new Overview page — reports `unavailable`. Nothing else on F6 depends on it. |
-| 9 | **`claim_debunk_segments`** (v1.5) | US12's per-audience Debunk recommendations. Without it the detail page still shows the single v1.4 draft, so this degrades rather than breaks. Flow 3's demo claim should populate at least one segment (US33). |
-| 10 | **`content_items.city`** (v1.5) | Makes US65's city selection actually partition F6 rather than label it. Lowest priority of the three: PRD 6.6.4 already scopes this phase to one city at a time. |
+| 1 | Honour `force` on Flow 1 (re-run and supersede, instead of short-circuiting) | ✅ **Done.** Plus an automatic re-run after a recorded failure even without `force`. |
+| 2 | Create a `claim_policies` link for the Flow 3 demo claim | ✅ **Done.** Nearest policy by embedding, falling back to the most recent. |
+| 3 | Honour `callback_url` on Flow 1, falling back to `BACKEND_URL` | ✅ **Done.** Set `BACKEND_PUBLIC_URL` here to use it. |
+| 4 | **`content_items.posted_at`** — when the account published, distinct from when we captured it | ❌ **Still open.** Synchrony now computes, but on ingest time, so it measures our crawler's schedule as much as the accounts' behaviour. |
+| 5 | **An `account` table** — durable platform account identity, with `created_at_platform`, `profile_hash`, bio, declared location and client/app string | ⚠️ **Partial.** The table exists and the allowlist keys on it. `created_at_platform` and `profile_hash` are populated; `bio`, `declared_location` and `client_app` are columns nothing writes, and `content_items.author_id` is still a bare varchar rather than an FK. |
+| 6 | Sign off (or amend) the `BEYOND 10.10` columns in `docs/sql/01_f5_reference_schema.sql` | ✅ **Signed off**, adopted as proposed, column for column. |
+| 7 | Implement Flow 7 and Flow 8 | ✅ **Done.** Both endpoints, all ten tables, parameters persisted per run. |
+| 8 | **`content_items.sentiment`** (v1.5) | ✅ **Done.** Written on every ingestion path, assessed independently of `stance`. |
+| 9 | **`claim_debunk_segments`** (v1.5) | ✅ **Done.** 1–4 segments per Existing claim, Flow 3's demo claim included. |
+| 10 | **`content_items.city`** (v1.5) | 🚫 **Deferred, deliberately.** Held until a second city is configured. `city.partitioned` stays `false`; F4's selection labels this instance. |
 
-Asks 8–10 are the PRD v1.5 additions, with DDL in
-[sql/02_f6_reference_schema.sql](sql/02_f6_reference_schema.sql). All three are
-optional by construction — the backend probes for them at boot and degrades in a
-documented way — so none of them blocks a deploy.
+Asks 8–10 were the PRD v1.5 additions, with DDL in
+[sql/02_f6_reference_schema.sql](sql/02_f6_reference_schema.sql). Two shipped
+against that DDL unchanged; the third is a product decision rather than an
+outstanding request, so the backend's documented degradation for it is now the
+expected steady state.
 
-Asks 1–3 break nothing today: unknown request fields are ignored, so the
-backend's half of each is already in place and inert until the AI side catches
-up.
+**Asks 4 and 5 are what is left, and they are still the F5 quality ceiling —
+though no longer a blocker.** F5 produces data now: the pipeline runs, the
+tables fill, and every downstream surface works against real output. What the
+missing schema costs is *recall and confidence*, not existence. Two or more
+unavailable signal families cap every network at Medium, so a `high`-confidence
+network cannot occur in production today, and Synchrony — the signal the PRD's
+own worked example leads with — is measured against the wrong clock. Closing
+these two is what turns F5 from working into trustworthy. See
+`docs/local_docs/PRD-v1.4.md` Section 5 for the signal-by-signal analysis, and
+Flow 7 above for the per-family breakdown.
 
-**Asks 4 and 5 are different — they are the F5 blocker.** Three of the five
-detection signals cannot be computed at all from the current `content_items`
-table, and no amount of backend work changes that. This is the one item on this
-page that has to be settled before F5 can produce anything. See
-`docs/local_docs/PRD-v1.4.md` Section 5 for the signal-by-signal analysis.
+### Still open in the other direction
+
+Two questions the AI team has asked back, both about columns neither side can
+currently write under "no shared-table writes":
+
+- **`coordinated_network.relabelled`** — nothing sets it. The AI service writes
+  the row and cannot see a later human relabel; the backend can see one and
+  cannot write the column. It needs either a flow or a backend-owned overlay
+  column, the way `cis_claim_reviews` already handles claim review status.
+- **`network_edge`'s per-signal weight columns** are `NOT NULL DEFAULT 0`, so an
+  unavailable family is indistinguishable from a measured zero at edge level.
+  `detection_run.signals_unavailable` is the run-level answer; if the backend
+  needs it per edge, the columns have to become nullable.

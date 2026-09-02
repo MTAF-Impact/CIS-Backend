@@ -36,11 +36,19 @@ func (j *JSONB) Scan(value any) error {
 
 // Value implements driver.Valuer. A nil or empty document is stored as SQL
 // NULL rather than as the string "null", so `IS NULL` behaves as expected.
+//
+// The document is handed to the driver as a string, never as []byte. Under
+// PreferSimpleProtocol (the Supabase transaction pooler, see the StringList
+// comment below) pgx interpolates arguments into the SQL text itself, and it
+// renders a []byte as a bytea hex literal (a backslash-x hex string), which
+// Postgres rejects for a jsonb column with "invalid input syntax for type
+// json" (SQLSTATE 22P02). A string is quoted as a plain SQL string literal and
+// casts into jsonb under both protocols.
 func (j JSONB) Value() (driver.Value, error) {
 	if len(j) == 0 {
 		return nil, nil
 	}
-	return []byte(j), nil
+	return string(j), nil
 }
 
 // MarshalJSON emits the stored document inline instead of base64-encoding it,
@@ -118,12 +126,17 @@ func (l *StringList) Scan(value any) error {
 	return nil
 }
 
-// Value implements driver.Valuer.
+// Value implements driver.Valuer. Returns a string, not the []byte json.Marshal
+// hands back, for the reason spelled out on JSONB.Value.
 func (l StringList) Value() (driver.Value, error) {
 	if l == nil {
 		return nil, nil
 	}
-	return json.Marshal([]string(l))
+	buf, err := json.Marshal([]string(l))
+	if err != nil {
+		return nil, err
+	}
+	return string(buf), nil
 }
 
 // GormDataType tells AutoMigrate to create a jsonb column.

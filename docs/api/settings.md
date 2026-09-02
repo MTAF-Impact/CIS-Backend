@@ -172,6 +172,11 @@ and `city.partitioned` on the F6 response is `false` so the UI can say so. PRD
 6.6.4 already scopes this phase to one city at a time, so an untagged deployment
 is the single-city instance the PRD describes rather than a broken one.
 
+**Today it labels.** The AI team has deferred `content_items.city` until a second
+city is actually configured, for exactly the reason above — so expect
+`city.partitioned: false`, and treat the labelling branch as the live one rather
+than the fallback.
+
 ---
 
 # The detector control panel (US62)
@@ -309,7 +314,13 @@ button was clicked, exactly as US33 requires.
 > claim itself: `claims` is owned and written exclusively by the AI service, and
 > this backend never writes AI-owned tables. The AI service inserts a fully
 > populated claim — score breakdown, statements, top accounts, cached debunk
-> draft — and returns its id.
+> draft, its `claim_debunk_segments` rows, and a `claim_policies` link so the
+> Related Policies panel is populated too — and returns its id. It builds the
+> claim through the same construction and scoring pipeline real clustering uses,
+> not a parallel path, so nothing about a demo claim can drift from a real one.
+>
+> Expect **30–60 seconds**: it is several sequential LLM calls, which is why this
+> runs on `AI_SERVICE_LONG_TIMEOUT`.
 
 **503 SERVICE_UNAVAILABLE** when `AI_SERVICE_URL` is not configured:
 
@@ -425,15 +436,21 @@ The three `claims_*` / `content_items_clustered` counts are `null` when
 clustering that produced nothing. Like the claim generator, this moves the S1
 "last fetched" timestamp — new content means new claims.
 
-> **Until a live crawler exists, this is the only way content enters the system
-> through the product.** Outside of policy matchmaking's predicted claims and the
-> single demo claim above, nothing else populates `content_items` — and
+> **This is the only way content enters the system through the product.**
+> Outside of policy matchmaking's predicted claims and the single demo claim
+> above, nothing a backend endpoint can trigger populates `content_items` — and
 > therefore nothing else populates Existing claims.
 >
+> A real crawler now exists on the AI side — a separate Cloud Run Job pulling RSS
+> and public Telegram channels into `POST /ingest/batch` — but it is not yet fed:
+> its feed and channel lists, and its Telegram credentials, need manual curation
+> before it produces anything. Until that is done, this button remains the
+> practical source of content, and it stays useful afterwards for demos.
+>
 > The AI service's plain `/ingest` and `/ingest/batch` endpoints are
-> deliberately **not** proxied. Those are a machine crawler's interface; a
-> crawler should call the AI service directly rather than routing content through
-> a human-facing, JWT-authenticated backend.
+> deliberately **not** proxied. Those are that crawler's interface; it calls the
+> AI service directly rather than routing content through a human-facing,
+> JWT-authenticated backend.
 
 Long-running with `auto_cluster` on: it uses `AI_SERVICE_LONG_TIMEOUT`.
 

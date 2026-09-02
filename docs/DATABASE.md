@@ -16,17 +16,28 @@ Everything about the schema design follows from one rule.
 | Ownership | Tables | This backend's access |
 |---|---|---|
 | **AI service** | `claims`, `content_items`, `topics`, `policies`, `claim_policies`, `topic_volume_buckets`, `claim_alerts`, `claim_score_snapshots`, `admin_settings`, `fault_lines`, `official_sources` | **SELECT only.** Never inserted, updated, deleted, or migrated. |
-| **AI service — F5 pipeline** | `detection_run`, `coordinated_network`, `network_account`, `account`, `network_edge`, `network_evidence_post`, `network_burst_bin`, `network_claim_link`, `offtopic_cluster`, `evidence_snapshot` | **SELECT only**, same rule. Their *absence* is tolerated, unlike the tables above: F1–F4 work without them and the F5 endpoints answer `503` until the pipeline exists. |
+| **AI service — F5 pipeline** | `detection_run`, `coordinated_network`, `network_account`, `account`, `network_edge`, `network_evidence_post`, `network_burst_bin`, `network_claim_link`, `offtopic_cluster`, `evidence_snapshot` | **SELECT only**, same rule. Their *absence* is tolerated, unlike the tables above: F1–F4 work without them and the F5 endpoints answer `503` until the AI service has created them. The pipeline that writes them is built and matches [sql/01_f5_reference_schema.sql](sql/01_f5_reference_schema.sql) column for column. |
+| **AI service — v1.5 optional** | `claim_debunk_segments` | **SELECT only.** Probed at boot (`optionalF6Tables`); absent, the claim detail page falls back to the single `activity_content` draft. Now written by the AI service. |
 | **This backend** | `cis_users`, `cis_refresh_tokens`, `cis_policies`, `cis_claim_reviews`, `cis_claim_alerts`, `cis_claim_score_snapshots`, `cis_settings` | Exclusive read/write, managed by GORM AutoMigrate. |
 | **This backend — F5** | `cis_network_reviews`, `cis_network_review_log`, `cis_coordination_allowlist`, `cis_common_phrases`, `cis_network_reports`, `cis_export_audit_log`, `cis_detector_settings`, `cis_setting_history` | Same. Every one records a **human decision** or a backend-generated artefact. |
 
 Of the AI-owned tables, the backend actually reads eight: `claims`,
 `content_items`, `topics`, `policies`, `claim_policies` and
-`claim_score_snapshots` on the hot paths, plus `topic_volume_buckets` for
-diagnostics. `claim_alerts`, `admin_settings`, `fault_lines` and
-`official_sources` are listed for completeness and never queried — the first two
-because the backend keeps its own authoritative copies (see **Duplicated
-state**), the last two because they are the AI pipeline's own inputs.
+`claim_score_snapshots` on the hot paths, `claim_debunk_segments` on the claim
+detail page, plus `topic_volume_buckets` for diagnostics. `claim_alerts`,
+`admin_settings`, `fault_lines` and `official_sources` are listed for
+completeness and never queried — the first two because the backend keeps its own
+authoritative copies (see **Duplicated state**), the last two because they are
+the AI pipeline's own inputs.
+
+Two of `content_items`' columns are probed at boot rather than assumed
+(`internal/database/migrate.go`'s `optionalF6Columns`). **`sentiment` is now
+written by the AI service** on every ingestion path, so F6's Climate Sentiment
+Index computes; rows ingested before it shipped carry `NULL` and still count
+toward the denominator. **`city` is not, deliberately** — the AI team is holding
+it until a second city is configured — so `city.partitioned` reports `false` and
+F4's city selection labels this instance rather than filtering it. See
+[AI-INTEGRATION.md](AI-INTEGRATION.md#content_items).
 
 > Corrected on 2026-08-31: this matrix previously listed `narratives` and
 > `intervention_responses`, which the AI service no longer has, and omitted
@@ -366,6 +377,13 @@ constrain a table it does not own. So nothing cascades:
   "completed" badge above empty claim lists
 
 Nothing errors. The UI just quietly shows wrong things.
+
+Both scripts now **refuse to run** when they detect any `cis_%` table, unless
+explicitly overridden with a flag — so the accident this section describes has to
+be committed on purpose. The reconcile sweep below stays, because an override is
+still possible and because a reset performed before that guard existed leaves the
+same dangling rows.
+
 `POST /api/v1/admin/reconcile` sweeps all four: it deletes the orphaned overlay
 rows and re-queues any policy whose AI record vanished, so its correlations can
 be rebuilt. It refuses to run when the `claims` table is empty — that usually

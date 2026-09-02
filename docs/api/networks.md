@@ -10,11 +10,14 @@ export records who did it and why.
 
 ---
 
-## Before you start: the detector may not exist yet
+## Before you start: two things about the detector
 
 The detection *maths* runs in the AI service. This backend reads its output,
-governs it, and presents it. If the pipeline has not been deployed, its tables
-are absent and every endpoint on this page answers:
+governs it, and presents it.
+
+**1. The tables have to exist.** The pipeline is built and deployed on the AI
+side, but until its schema has been created against the database this backend is
+pointed at, those tables are absent and every endpoint on this page answers:
 
 ```json
 {
@@ -26,6 +29,24 @@ are absent and every endpoint on this page answers:
 
 F1–F4 are unaffected — and so is the US61 claim badge, which simply does not
 appear. See "Cross-links into F1" at the bottom.
+
+**2. `high` confidence is currently unreachable.** Three of the five signal
+families have no data to run on in today's ingestion schema — co-amplification
+has no reshare/reply fields, provenance has only handle and creation timing, and
+structural overlap has no follower graph. Two or more unavailable families cap a
+run at Medium regardless of score, which is the pipeline behaving correctly, not
+a bug in the band logic. Every response carries `signals_unavailable` so the
+reason is visible rather than inferred, and Synchrony — the one family that does
+compute — currently runs on ingest time rather than publish time. See
+[AI-INTEGRATION.md](../AI-INTEGRATION.md#where-flow-7-actually-stands) for the
+per-family breakdown and what would lift the cap.
+
+Three smaller consequences worth knowing before wiring a UI against them:
+`shared_span_start`/`shared_span_end` on evidence posts are always `null`, so
+there are no highlight offsets to render inside a near-duplicate pair;
+`relabelled` is never set by either side; and comparison-role accounts carry no
+`layout_x`/`layout_y`, so the graph view has to position them itself or leave
+them out.
 
 ---
 

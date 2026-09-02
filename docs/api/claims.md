@@ -409,9 +409,12 @@ segment's own framing — still generated once, at claim creation, and cached.
 ```
 
 Always an array, never `null` — a nullable list is a branch the frontend should
-not have to write. It is **empty** for Synthetic claims (whose prebunk is not
-segmented) and on a deployment whose AI service has not shipped segmentation
-yet, where the page falls back to `content`. See
+not have to write. The AI service ships segmentation, writing 1–4 segments per
+Existing claim (Flow 3's demo claim included), so this is normally populated. It
+is **empty** for Synthetic claims, whose prebunk is not segmented; for claims
+created before segmentation shipped, which are never backfilled because the
+generation is once-only; and if a generation failed, which never invalidates
+`content`. In each case the page falls back to `content`. See
 [sql/02_f6_reference_schema.sql](../sql/02_f6_reference_schema.sql).
 
 Ordered most-exposed segment first. **Never merge the variants into one box** —
