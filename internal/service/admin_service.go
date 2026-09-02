@@ -229,21 +229,6 @@ func (s *AdminService) Rescore(ctx context.Context) (*RescoreResult, error) {
 	return &RescoreResult{ClaimsRescored: res.ClaimsRescored}, nil
 }
 
-// RescoreIfEnabled runs a rescore and swallows a "not configured" result.
-//
-// Used by the snapshot cron, which must still capture whatever scores exist
-// when no AI service is configured.
-func (s *AdminService) RescoreIfEnabled(ctx context.Context) (int, error) {
-	if !s.ai.Enabled() {
-		return 0, nil
-	}
-	res, err := s.ai.Rescore(ctx)
-	if err != nil {
-		return 0, err
-	}
-	return res.ClaimsRescored, nil
-}
-
 // ReconcileResult reports what a reconciliation swept up.
 type ReconcileResult struct {
 	DryRun                 bool   `json:"dry_run"`

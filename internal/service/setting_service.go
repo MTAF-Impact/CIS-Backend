@@ -17,11 +17,20 @@ import (
 // SettingService serves the F4 Admin Settings page.
 type SettingService struct {
 	settings *repository.SettingRepository
+	// cache holds a short-lived snapshot of cis_settings. Scoring weights and
+	// the CSI parameters are read several times per rendered page and change a
+	// handful of times a year, so reading them per use would be a round trip
+	// per parameter per request. See dynamic_config.go.
+	cache configCache
 }
 
 // NewSettingService constructs a SettingService.
-func NewSettingService(settings *repository.SettingRepository) *SettingService {
-	return &SettingService{settings: settings}
+//
+// cacheTTL is APP's SettingsCacheTTL; a non-positive value falls back to
+// defaultConfigCacheTTL rather than disabling the cache, since "no caching"
+// would put a query behind every weight read on every rendered page.
+func NewSettingService(settings *repository.SettingRepository, cacheTTL time.Duration) *SettingService {
+	return &SettingService{settings: settings, cache: configCache{ttl: cacheTTL}}
 }
 
 // SettingView is the public representation of a configuration value.
@@ -58,20 +67,23 @@ func (s *SettingService) List(ctx context.Context) ([]SettingView, error) {
 // AlertThreshold returns the global Over/Under Threshold cutoff used by F3
 // (US29, US32). It falls back to the documented default when the row is
 // missing, so the Alert page never breaks on a fresh database.
+//
+// Read through the configuration cache rather than with a query of its own:
+// this is the single most-read setting in the system — every claim list, the
+// whole Overview page and every snapshot cycle compare against it.
+// A read failure is returned rather than swallowed, unlike the
+// presentation-only settings. This value decides which claims are Over
+// Threshold, and EvaluateCrossings writes a durable notification for every
+// claim whose status appears to have changed — so answering with a documented
+// default while the real value is unknown would manufacture crossings nobody's
+// configuration implies. values() already falls back to the last successful
+// read, so this only fires when the process has never managed one.
 func (s *SettingService) AlertThreshold(ctx context.Context) (float64, error) {
-	setting, err := s.settings.Get(ctx, models.SettingAlertThreshold)
+	values, err := s.values(ctx)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return models.DefaultAlertThreshold, nil
-		}
-		return 0, apperr.Internal("could not load alert threshold").Wrap(err)
+		return 0, err
 	}
-
-	value, parseErr := strconv.ParseFloat(setting.Value, 64)
-	if parseErr != nil {
-		return models.DefaultAlertThreshold, nil
-	}
-	return scoring.Clamp(value), nil
+	return scoring.Clamp(parseConfigFloat(values, models.SettingAlertThreshold)), nil
 }
 
 // AlertThresholdView returns the threshold with its audit metadata.
@@ -105,16 +117,20 @@ func (s *SettingService) SetAlertThreshold(ctx context.Context, threshold float6
 		return nil, apperr.Unprocessable("threshold must be between 0 and 100")
 	}
 
-	setting, err := s.settings.Upsert(
-		ctx,
-		models.SettingAlertThreshold,
-		formatFloat(threshold),
-		"number",
-		"Global FinalClaimScore threshold (0-100) deciding Over/Under Threshold on the Alert page (PRD US32).",
-		updatedBy,
-	)
-	if err != nil {
+	param, _ := models.FindConfigParam(models.SettingAlertThreshold)
+	if err := s.settings.UpsertMany(ctx, []repository.SettingWrite{{
+		Key:         models.SettingAlertThreshold,
+		Value:       formatFloat(threshold),
+		ValueType:   "number",
+		Description: param.Description,
+	}}, updatedBy); err != nil {
 		return nil, apperr.Internal("could not save alert threshold").Wrap(err)
+	}
+	s.cache.invalidate()
+
+	setting, err := s.settings.Get(ctx, models.SettingAlertThreshold)
+	if err != nil {
+		return nil, apperr.Internal("could not reload alert threshold").Wrap(err)
 	}
 
 	view := &ThresholdView{Threshold: threshold, UpdatedAt: setting.UpdatedAt}
@@ -168,6 +184,7 @@ func (s *SettingService) SetMonitoredCity(ctx context.Context, name string, upda
 	); err != nil {
 		return models.City{}, apperr.Internal("could not save the monitored city").Wrap(err)
 	}
+	s.cache.invalidate()
 
 	if _, err := s.SetCityTimezone(ctx, city.Timezone, updatedBy); err != nil {
 		return models.City{}, err
@@ -207,6 +224,7 @@ func (s *SettingService) TouchClaimsLastFetchedAt(ctx context.Context, at time.T
 	if err != nil {
 		return time.Time{}, apperr.Internal("could not update last fetched timestamp").Wrap(err)
 	}
+	s.cache.invalidate()
 	return at.UTC(), nil
 }
 

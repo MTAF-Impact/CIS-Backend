@@ -83,7 +83,7 @@ func main() {
 	reportRepo := repository.NewReportRepository(db)
 
 	authSvc := service.NewAuthService(userRepo, cfg.Auth)
-	settingSvc := service.NewSettingService(settingRepo)
+	settingSvc := service.NewSettingService(settingRepo, cfg.App.SettingsCacheTTL)
 	claimSvc := service.NewClaimService(claimRepo, alertRepo, policyRepo, snapshotRepo, networkRepo, settingSvc, ai)
 	policySvc := service.NewPolicyService(policyRepo, claimRepo, alertRepo, networkRepo, store, ai, cfg.App)
 	alertSvc := service.NewAlertService(alertRepo, claimRepo, snapshotRepo, settingSvc)
@@ -140,7 +140,7 @@ func main() {
 
 	router.Register(app, handlers, authSvc)
 
-	cron := scheduler.New(cfg.Cron, policySvc, alertSvc, adminSvc, detectionSvc)
+	cron := scheduler.New(cfg.Cron, policySvc, alertSvc, settingSvc, detectionSvc)
 	if err := cron.Start(); err != nil {
 		log.Fatalf("scheduler error: %v", err)
 	}

@@ -255,6 +255,8 @@ func (s *SettingService) SetCityTimezone(ctx context.Context, name string, updat
 		return "", apperr.Internal("could not save the city timezone").Wrap(err)
 	}
 
+	s.cache.invalidate()
+
 	if err := s.settings.RecordSettingChange(ctx, models.SettingCityTimezone, from, name, updatedBy); err != nil {
 		return "", apperr.Internal("could not record the city timezone change").Wrap(err)
 	}

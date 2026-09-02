@@ -331,7 +331,7 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 
 	firstCaught := row.FirstCaughtAt
 	detail.FirstCaughtAt = &firstCaught
-	detail.ScoreBreakdown = buildBreakdown(row)
+	detail.ScoreBreakdown = s.buildBreakdown(ctx, row)
 
 	// US23: an edited H must be visually distinguishable from an AI-original one
 	// everywhere it is shown, which needs the edit itself, not only the
@@ -419,7 +419,16 @@ func buildActivity(claimType string, claim models.AIClaim) dto.ActivityContent {
 // Every component is returned together with FinalClaimScore so the collapsed
 // number is never presented without its inputs. Values are clamped defensively
 // per PRD 6.3 / 6.4.4.
-func buildBreakdown(row *repository.ClaimRow) *dto.ScoreBreakdown {
+//
+// The weights and the plain-language formula come from the live configuration
+// rather than from constants: an admin who retunes them in F4 changes what the
+// score means, and a breakdown that kept explaining the old weighting would be
+// describing a ranking the system no longer performs.
+func (s *ClaimService) buildBreakdown(ctx context.Context, row *repository.ClaimRow) *dto.ScoreBreakdown {
+	weights := s.settings.CompositeWeights(ctx)
+	harmWeights := s.settings.HarmWeights(ctx)
+	gamma := s.settings.DiscountGamma(ctx)
+
 	breakdown := &dto.ScoreBreakdown{
 		Reach:                      scoring.ClampPtr(row.ReachScore),
 		Velocity:                   scoring.ClampPtr(row.VelocityScore),
@@ -433,15 +442,15 @@ func buildBreakdown(row *repository.ClaimRow) *dto.ScoreBreakdown {
 			Economic:           scoring.ClampPtr(row.HarmEconomic),
 			PolicyDisruption:   scoring.ClampPtr(row.HarmPolicyDisruption),
 			HumanConfirmed:     row.HarmHumanConfirmed,
-			Weights:            scoring.PublishedHarmWeights(),
+			Weights:            harmWeights,
 		},
 		ClaimScore:      scoring.ClampPtr(row.ClaimScore),
 		NPR:             scoring.ClampRatio(row.NPR),
-		DiscountFactor:  scoring.ClampDiscount(row.DiscountFactor),
+		DiscountFactor:  scoring.ClampDiscount(row.DiscountFactor, gamma),
 		FinalClaimScore: scoring.ClampPtr(row.FinalClaimScore),
 		IsDormant:       row.IsDormant,
-		Weights:         scoring.PublishedWeights(),
-		Formula:         scoring.FormulaSummary,
+		Weights:         weights,
+		Formula:         scoring.FormulaSummary(weights, harmWeights, gamma),
 	}
 
 	// US25 / PRD 6.4.7: a dormant claim has no volume to measure pushback

@@ -111,6 +111,9 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	policies.Get("/:id/file", h.Policy.Download)
 	policies.Put("/:id/file", h.Policy.ReplaceFile)
 	policies.Get("/:id/processing", h.Policy.ProcessingStatus)
+	// US41: rollout is a human decision, not a nightly derivation from the
+	// rolled-out date. Mirrors PUT /claims/:id/status.
+	policies.Put("/:id/status", h.Policy.UpdateStatus)
 	policies.Post("/:id/rematch", h.Policy.Rematch)
 	policies.Patch("/:id", h.Policy.Update)
 	policies.Delete("/:id", h.Policy.Delete)
@@ -130,6 +133,13 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	// F4 — Admin Setting Page.
 	settings := v1.Group("/settings", authed)
 	settings.Get("/", h.Setting.List)
+	// The dynamic-parameter catalog: every runtime-configurable value with its
+	// bounds, its group and its current value, plus the partial-update writer
+	// the F4 form posts to. Registered before the "/parameters/:key" reset so
+	// the literal path is never captured as a key.
+	settings.Get("/parameters", h.Setting.Parameters)
+	settings.Put("/parameters", h.Setting.UpdateParameters)
+	settings.Delete("/parameters/:key", h.Setting.ResetParameter)
 	settings.Get("/alert-threshold", h.Setting.GetAlertThreshold)
 	settings.Put("/alert-threshold", h.Setting.UpdateAlertThreshold)
 	// US65 city configuration. "cities" is the dropdown's option list and

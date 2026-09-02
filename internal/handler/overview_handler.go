@@ -19,10 +19,12 @@ func NewOverviewHandler(overview *service.OverviewService) *OverviewHandler {
 
 // Page handles GET /api/v1/overview: O1, O2 and O3 in one call (US66-US70).
 //
-// ?limit sets the size of the O3 leaderboard; the default is the top 5 US70
-// settles on.
+// ?limit overrides the size of the O3 leaderboard for one request. Omitting it
+// uses the configured overview.top_policy_limit, which is where US70's "Top 10
+// vs top 5" contradiction is actually settled — the query parameter is an
+// override, not the setting.
 func (h *OverviewHandler) Page(c *fiber.Ctx) error {
-	page, err := h.overview.Page(c.UserContext(), c.QueryInt("limit", service.TopPolicyLimit))
+	page, err := h.overview.Page(c.UserContext(), c.QueryInt("limit", 0))
 	if err != nil {
 		return err
 	}

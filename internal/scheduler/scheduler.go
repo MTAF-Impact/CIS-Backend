@@ -1,14 +1,11 @@
 // Package scheduler runs the background jobs the PRD requires.
 //
-// Five jobs matter:
+// Four jobs matter:
 //
-//   - Policy rollout (US41): a "Not Rolled Out" policy's date eventually
-//     arrives, so status must be re-evaluated on a schedule, not only at
-//     creation time.
 //   - Score snapshots: the F3 chart plots FinalClaimScore over time (US27), but
-//     the AI service only stores the current value. This job asks the AI
-//     service to re-evaluate scores, then copies them into the backend-owned
-//     snapshot table to build that history.
+//     the AI service only stores the current value, so this job copies it into
+//     the backend-owned snapshot table to build that history. It captures — it
+//     does not ask the AI service to rescore first; see runScoreSnapshot.
 //   - Matchmaking retry: a policy whose AI hand-off failed, or whose result
 //     callback was lost, is stranded on a "Processing" badge until something
 //     re-queues it. Nothing else does.
@@ -18,12 +15,18 @@
 //   - Snapshot retention (F5, PRD 10.9.1 rule 7): purges evidence snapshots
 //     past their horizon, except where a report was generated from them.
 //
-// The backend owns cron for all five. The AI service has no scheduler at all —
-// its background work is exclusively request-scoped — and the rescore must
-// happen before the snapshot, which is trivially ordered when one process
-// drives both. F5's runs are dispatched from here for the same reason: the
-// scope rules (Active Existing claims only) and the window arithmetic live on
-// this side.
+// The backend owns cron for all four. The AI service has no scheduler at all —
+// its background work is exclusively request-scoped. F5's runs are dispatched
+// from here because the scope rules (Active Existing claims only) and the
+// window arithmetic live on this side.
+//
+// # What used to be here
+//
+// A fifth job flipped a policy from "Not Rolled Out" to "Rolled Out" once its
+// date arrived. It was removed: a rolled-out date is a plan, and a job
+// comparing it against the clock cannot tell a policy that actually launched
+// from one that slipped. Rollout is now an operator's decision
+// (PUT /api/v1/policies/:id/status, PolicyService.SetStatus).
 package scheduler
 
 import (
@@ -37,16 +40,13 @@ import (
 	"github.com/cis/cis-backend/internal/service"
 )
 
-// SnapshotRetention is how long score history is kept before pruning.
-const SnapshotRetention = 400 * 24 * time.Hour
-
 // Scheduler owns the cron runner.
 type Scheduler struct {
 	cron      *cron.Cron
 	cfg       config.CronConfig
 	policies  *service.PolicyService
 	alerts    *service.AlertService
-	admin     *service.AdminService
+	settings  *service.SettingService
 	detection *service.DetectionService
 }
 
@@ -55,7 +55,7 @@ func New(
 	cfg config.CronConfig,
 	policies *service.PolicyService,
 	alerts *service.AlertService,
-	admin *service.AdminService,
+	settings *service.SettingService,
 	detection *service.DetectionService,
 ) *Scheduler {
 	return &Scheduler{
@@ -63,7 +63,7 @@ func New(
 		cfg:       cfg,
 		policies:  policies,
 		alerts:    alerts,
-		admin:     admin,
+		settings:  settings,
 		detection: detection,
 	}
 }
@@ -75,9 +75,6 @@ func (s *Scheduler) Start() error {
 		return nil
 	}
 
-	if _, err := s.cron.AddFunc(s.cfg.PolicyRolloutSpec, s.runPolicyRollout); err != nil {
-		return err
-	}
 	if _, err := s.cron.AddFunc(s.cfg.ScoreSnapshotSpec, s.runScoreSnapshot); err != nil {
 		return err
 	}
@@ -92,15 +89,14 @@ func (s *Scheduler) Start() error {
 	}
 
 	s.cron.Start()
-	log.Printf("[cron] started: policy rollout %q, score snapshot %q, matchmaking retry %q, "+
+	log.Printf("[cron] started: score snapshot %q, matchmaking retry %q, "+
 		"detection tick %q, snapshot retention %q",
-		s.cfg.PolicyRolloutSpec, s.cfg.ScoreSnapshotSpec, s.cfg.MatchmakingRetrySpec,
+		s.cfg.ScoreSnapshotSpec, s.cfg.MatchmakingRetrySpec,
 		s.cfg.DetectionSpec, s.cfg.SnapshotRetentionSpec)
 
 	// Run once at boot so a server that was down over a scheduled window catches
-	// up instead of waiting for the next tick. The retry sweep in particular
+	// up instead of waiting for the next tick. The retry sweep is the one that
 	// matters here: a crash mid-matchmaking is exactly what strands a policy.
-	go s.runPolicyRollout()
 	go s.runMatchmakingRetry()
 	return nil
 }
@@ -118,25 +114,12 @@ func (s *Scheduler) Stop() {
 	}
 }
 
-// runPolicyRollout flips policies whose rolled-out date has arrived (US41).
-func (s *Scheduler) runPolicyRollout() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	updated, err := s.policies.RefreshRolloutStatuses(ctx)
-	if err != nil {
-		log.Printf("[cron] policy rollout job failed: %v", err)
-	} else if updated > 0 {
-		log.Printf("[cron] flipped %d policies to rolled_out", updated)
-	}
-}
-
 // runMatchmakingRetry re-queues matchmaking jobs that failed or whose result
 // callback never arrived.
 //
-// It runs on its own frequent schedule rather than riding along with the daily
-// rollout job: a stranded policy shows a spinning badge and empty claim lists
-// for as long as it takes to notice, and a day is too long.
+// It runs on a frequent schedule because a stranded policy shows a spinning
+// badge and empty claim lists for as long as it takes to notice, and a day is
+// too long.
 func (s *Scheduler) runMatchmakingRetry() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -149,28 +132,28 @@ func (s *Scheduler) runMatchmakingRetry() {
 	}
 }
 
-// runScoreSnapshot re-evaluates scores, captures the result for every watched
-// claim, and prunes history beyond the retention window.
+// runScoreSnapshot captures the current score of every watched claim, evaluates
+// threshold crossings, and prunes history beyond the retention window.
 //
-// The rescore comes first, and the ordering is the whole point. Scores move with
-// wall-clock time alone — NPR drifts as opposing posts age out of the rolling
-// window, which changes the discount factor and so final_claim_score — but
-// nothing recomputes them on a schedule: the AI service has no cron of its own,
-// and clustering only runs when content arrives. Capturing without rescoring
-// first would copy the same number into the history every hour and draw US27's
-// trend chart as a horizontal line by construction.
+// # Why it no longer asks the AI service to rescore first
 //
-// A failed rescore is logged and the capture still runs: stale scores are worth
-// more in the chart than a gap.
+// It used to, on the reasoning that scores drift with wall-clock time alone and
+// nothing recomputed them on a schedule. That reasoning no longer holds: the AI
+// pipeline rescores a claim whenever its inputs move — every ingest that
+// attaches a statement re-runs clustering, which recomputes R/V/F/H/EI, NPR and
+// the discount for every claim it touched, and a harm confirmation re-runs the
+// same pass for that claim (CIS-AI docs/SCORING.md, "When scores are
+// (re)computed"). Every path that can change a score already recomputes it.
+//
+// So this job's remaining question is not "are the scores current" but "has the
+// current value been recorded", and firing an hourly full-repository rescore to
+// answer it spent an LLM-backed pass on claims whose inputs had not moved.
+// Capturing is cheap, is the only thing US27's chart actually needs, and leaves
+// rescoring where it belongs: with the events that change a score. A rescore is
+// still available on demand (POST /api/v1/admin/rescore).
 func (s *Scheduler) runScoreSnapshot() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-
-	if rescored, err := s.admin.RescoreIfEnabled(ctx); err != nil {
-		log.Printf("[cron] AI rescore failed, capturing existing scores anyway: %v", err)
-	} else if rescored > 0 {
-		log.Printf("[cron] AI service rescored %d claims", rescored)
-	}
 
 	count, err := s.alerts.CaptureSnapshots(ctx)
 	if err != nil {
@@ -182,8 +165,8 @@ func (s *Scheduler) runScoreSnapshot() {
 	}
 
 	// US71: a crossing is a change between two evaluations, so it can only be
-	// detected where the scores have just moved. Running it here — after the
-	// rescore and capture, not on a clock of its own — is what makes "on each
+	// detected where the scores have just been read. Running it here — right
+	// after the capture, not on a clock of its own — is what makes "on each
 	// score refresh" true rather than approximately true.
 	if crossings, err := s.alerts.EvaluateCrossings(ctx); err != nil {
 		log.Printf("[cron] threshold crossing evaluation failed: %v", err)
@@ -191,10 +174,11 @@ func (s *Scheduler) runScoreSnapshot() {
 		log.Printf("[cron] %d watched claims crossed the alert threshold", crossings)
 	}
 
-	if deleted, err := s.alerts.PruneSnapshots(ctx, SnapshotRetention); err != nil {
+	retention := s.settings.ScoreSnapshotRetention(ctx)
+	if deleted, err := s.alerts.PruneSnapshots(ctx, retention); err != nil {
 		log.Printf("[cron] snapshot pruning failed: %v", err)
 	} else if deleted > 0 {
-		log.Printf("[cron] pruned %d expired score snapshots", deleted)
+		log.Printf("[cron] pruned %d score snapshots older than %s", deleted, retention)
 	}
 }
 

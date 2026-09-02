@@ -117,8 +117,10 @@ On success the backend, in order:
    browsers inconsistently label `.doc`/`.docx`; a declared content type is only
    used to reject an obvious mismatch (so `application/octet-stream` is accepted).
 2. Streams the document to storage (Supabase bucket, or local disk in dev).
-3. Derives `status` automatically from `rolled_out_date` — **US41, never set by
-   the user**: on or before today ⇒ `rolled_out`, otherwise `not_rolled_out`.
+3. Derives the **initial** `status` from `rolled_out_date` (US41): on or before
+   today ⇒ `rolled_out`, otherwise `not_rolled_out`. This is a starting value,
+   not a standing rule — nothing revisits it later. See
+   [Rollout status is a decision, not a derivation](#rollout-status-is-a-decision-not-a-derivation).
 4. Kicks off AI matchmaking in the background and returns immediately with
    `processing_status: "pending"`. If the DB insert fails, the uploaded document
    is deleted so no orphan is left behind.
@@ -299,10 +301,56 @@ Edits policy metadata. All fields optional; at least one required.
 | Field | Rules |
 |---|---|
 | `name` | 2–500 |
-| `rolled_out_date` | `YYYY-MM-DD` — **re-derives `status`** (US41) |
+| `rolled_out_date` | `YYYY-MM-DD`. **Does not move `status`** — see below. |
 | `description` | ≤5000 |
+| `status` | `rolled_out` \| `not_rolled_out` (US41) |
 
-**Errors** — `400 BAD_REQUEST` if no updatable field was supplied.
+**Errors** — `400 BAD_REQUEST` if no updatable field was supplied ·
+`400 VALIDATION_FAILED` for a `status` outside the two values.
+
+---
+
+## PUT /api/v1/policies/:id/status
+
+Records the rollout decision for one policy (US41). Single-purpose, mirroring
+`PUT /claims/:id/status`.
+
+```bash
+curl -X PUT "http://localhost:8080/api/v1/policies/$ID/status" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status": "rolled_out"}'
+```
+
+| Field | Rules |
+|---|---|
+| `status` | **required** — `rolled_out` or `not_rolled_out` |
+
+**200 OK** — returns the updated policy card.
+
+**Errors** — `404 NOT_FOUND` · `400 VALIDATION_FAILED` for any other value.
+
+### Rollout status is a decision, not a derivation
+
+A nightly job used to flip a policy to `rolled_out` once its `rolled_out_date`
+arrived. It has been removed, along with `CRON_POLICY_ROLLOUT_SPEC`.
+
+A rolled-out date is a *plan*, and plans slip. A job comparing a plan against
+the clock cannot tell a policy that actually launched from one postponed the
+week before, so it reported every delayed policy as live — and did it again the
+next night after somebody corrected it, because nothing recorded that a human
+had already decided. F2's dates are entered months ahead, which is exactly the
+window in which they stop being true.
+
+So the two are now decoupled:
+
+- **Creation** still derives the initial status from the date, so the common
+  case needs no second step.
+- **Editing the date** no longer touches the status. Re-deriving on edit would
+  silently overwrite a human decision — the same bug in a smaller window.
+- **The status moves** only here, or via `status` on `PATCH /policies/:id`.
+
+The date is still what the card shows and still what `?status=` filters against.
+What it no longer does is decide, on its own, what the world looks like.
 
 ---
 

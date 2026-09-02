@@ -19,7 +19,7 @@ func TestBCSAndNormalization(t *testing.T) {
 		{"balanced", 50, 50, 100, 0, 50},
 		{"neutral majority", 10, 5, 100, 0.05, 52.5},
 		// PRD 6.6.1 gives no value for an empty window; callers gate on
-		// CSIMinimumVolume long before this, so it must simply not divide by zero.
+		// MinimumVolume long before this, so it must simply not divide by zero.
 		{"no conversation", 0, 0, 0, 0, 50},
 	}
 
@@ -53,16 +53,42 @@ func TestRiskLoadIsBounded(t *testing.T) {
 	}
 }
 
+// defaultParams mirrors the seeded configuration, so these tests assert the
+// PRD's own numbers rather than whatever the registry happens to hold.
+var defaultParams = CSIParams{
+	WeightBCS:        0.5,
+	WeightRiskLoad:   0.5,
+	RiskThreshold:    70,
+	MinimumVolume:    100,
+	WindowDays:       7,
+	MomentumLagHours: 24,
+	BandRiskyCeiling: 33.33,
+	BandWatchCeiling: 66.67,
+}
+
 func TestCSIInvertsRiskLoad(t *testing.T) {
 	// Higher must read as healthier: a calm-sounding conversation carrying a
 	// heavy risk load must not score as healthy on tone alone (PRD 6.6.3).
-	calmButRisky := CSI(90, 80)
-	calmAndClean := CSI(90, 0)
+	calmButRisky := defaultParams.Index(90, 80)
+	calmAndClean := defaultParams.Index(90, 0)
 	if calmButRisky >= calmAndClean {
 		t.Errorf("risk load did not lower the index: %v >= %v", calmButRisky, calmAndClean)
 	}
 	if want := 0.5*90 + 0.5*(100-80); math.Abs(calmButRisky-want) > epsilon {
 		t.Errorf("CSI = %v, want %v", calmButRisky, want)
+	}
+}
+
+// TestCSIHonoursConfiguredWeights covers the case the equal default hides: with
+// both halves at 0.5, a bug that swapped them would still produce the right
+// number.
+func TestCSIHonoursConfiguredWeights(t *testing.T) {
+	toneOnly := defaultParams
+	toneOnly.WeightBCS = 1
+	toneOnly.WeightRiskLoad = 0
+
+	if got := toneOnly.Index(90, 80); math.Abs(got-90) > epsilon {
+		t.Errorf("tone-only index = %v, want 90", got)
 	}
 }
 
@@ -80,8 +106,8 @@ func TestCSIBand(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		if got := CSIBand(tc.csi); got != tc.want {
-			t.Errorf("CSIBand(%v) = %q, want %q", tc.csi, got, tc.want)
+		if got := defaultParams.Band(tc.csi); got != tc.want {
+			t.Errorf("Band(%v) = %q, want %q", tc.csi, got, tc.want)
 		}
 	}
 }

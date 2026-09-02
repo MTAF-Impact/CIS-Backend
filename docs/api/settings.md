@@ -3,6 +3,200 @@
 All routes require a Bearer token. There are **no roles** in this build, so any
 authenticated user can change these settings — see [auth.md](auth.md).
 
+## Three configuration surfaces, not one
+
+| Surface | Stored in | Endpoint | Why it is separate |
+|---|---|---|---|
+| **Dynamic parameters** | `cis_settings` (key/value) | `GET|PUT /settings/parameters` | The general case: scoring weights, CSI, thresholds, display limits. One row per key, one registry describing them all. |
+| **F5 detector parameters** | `cis_detector_settings` (typed columns) | `GET|PUT /settings/detector` | Two of its constraints are cross-field (the five fusion weights must sum to 1.00; cadence ≤ W/2), which a per-key setter cannot check across thirty independent keys. |
+| **Purpose-built writers** | `cis_settings` | `PUT /settings/alert-threshold`, `/settings/city`, `/settings/city-timezone` | Each needs validation the generic setter cannot do — a city catalog, an IANA zone table — or predates the registry and stays for compatibility. |
+
+Everything in all three is versioned in `cis_setting_history`: key, from-value,
+to-value, acting user, timestamp (US62). `GET /settings/history` reads it.
+
+**Not here:** infrastructure. Ports, pool sizes, timeouts, cron expressions and
+storage credentials stay in the environment — see `.env.example`. Changing one
+is a deployment act.
+
+For the parameter-by-parameter breakdown by audience, see
+[FE_DYNAMIC_PARAMETER.md](../local_docs/FE_DYNAMIC_PARAMETER.md); for the split
+of which service reads what, see
+[AI_DYNAMIC_PARAMETER.md](../local_docs/AI_DYNAMIC_PARAMETER.md).
+
+---
+
+## GET /api/v1/settings/parameters
+
+The whole dynamic-parameter surface in one call: two tiers, the sections inside
+them, and every parameter's definition alongside its current value.
+
+Render the F4 form from this rather than from a hardcoded copy of the
+specification. Two copies of a bound drift, and the drift shows up as a form
+that accepts a value the server then rejects.
+
+```bash
+curl http://localhost:8080/api/v1/settings/parameters -H "Authorization: Bearer $TOKEN"
+```
+
+**200 OK**
+
+```json
+{
+  "success": true,
+  "message": "configurable parameters",
+  "data": {
+    "tiers": [
+      {
+        "key": "operations",
+        "title": "Operational settings",
+        "description": "Day-to-day controls a city administrator can change safely..."
+      },
+      {
+        "key": "analytics",
+        "title": "Model & analytics settings",
+        "description": "Values that change what a score means..."
+      }
+    ],
+    "sections": [
+      {
+        "key": "composite_weights",
+        "tier": "analytics",
+        "title": "Claim score — composite weights",
+        "description": "How the five parameters combine into a claim's score. Must total 1.00.",
+        "parameters": [
+          {
+            "key": "scoring.weight_reach",
+            "label": "Weight — Reach (R)",
+            "tier": "analytics",
+            "section": "composite_weights",
+            "type": "number",
+            "default": "0.15",
+            "min": 0,
+            "max": 1,
+            "owner": "shared",
+            "sum_group": "composite_weights",
+            "prd_ref": "§6.3; US22",
+            "param_id": "AP-01",
+            "description": "Share of the composite score contributed by how far the claim has travelled.",
+            "value": "0.15",
+            "is_set": true,
+            "writable": true
+          }
+        ]
+      }
+    ],
+    "generated_at": "2026-09-03T09:00:00Z"
+  }
+}
+```
+
+**Fields that drive the form**
+
+| Field | Use |
+|---|---|
+| `tier` | Which of the two screens/tabs the parameter belongs on. |
+| `section` | Which fieldset within that screen. Sections arrive in display order. |
+| `type` | `number` \| `integer` \| `string` \| `boolean`. Pick the input control. |
+| `min` / `max` | Bounds for a numeric input. Absent means unbounded. |
+| `unit` | Suffix label: `days`, `hours`, `MB`, `score`, `σ`, `cosine`. |
+| `default` | The documented default, for a "reset" affordance. |
+| `value` | The effective current value — the stored one, or `default` when no row exists. |
+| `is_set` | The value differs from `default` — somebody changed it, and a reset would do something. Not "a row exists": the seed writes a row for every parameter. |
+| `writable` | `false` means this endpoint will not set it: it is either derived or has a dedicated endpoint (see `managed_by`). Render it read-only. |
+| `sum_group` | Members of a group must total exactly `1.00`. Show a running total as the user edits; the server rejects a save that breaks it. |
+| `derived` | Computed from another parameter, never stored. Show it beside its source. |
+| `managed_by` | The endpoint that owns writes for this key. |
+| `owner` | Which service reads it: `backend`, `ai` or `shared`. Informational. |
+| `param_id` | The AP-xx id from the Admin Configurable Parameters specification. |
+| `note` | A caveat the bounds alone do not express. Worth showing as help text. |
+
+---
+
+## PUT /api/v1/settings/parameters
+
+Partial update. Only the keys in the body change; every other parameter keeps
+its stored value.
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/settings/parameters \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+        "parameters": {
+          "scoring.weight_reach": "0.20",
+          "scoring.weight_velocity": "0.10"
+        }
+      }'
+```
+
+Values are sent as **strings** regardless of type: the registry already declares
+how each is parsed, so the transport does not need to guess.
+
+**200 OK** — returns the full refreshed catalog, in the same shape as `GET`. A
+form that saves one weight can therefore re-render its group's running total
+without a second request.
+
+**Errors**
+
+`422 UNPROCESSABLE` in two shapes, both carrying per-key `details`:
+
+```json
+{
+  "success": false,
+  "error": { "code": "UNPROCESSABLE", "message": "some parameters failed validation",
+             "details": { "scoring.harm_weight_policy_disruption": "must be at most 0.25" } }
+}
+```
+
+```json
+{
+  "success": false,
+  "error": { "code": "UNPROCESSABLE",
+             "message": "the parameters are individually valid but inconsistent together",
+             "details": { "composite_weights": "the five composite score weights must sum to 1.00, got 1.0500" } }
+}
+```
+
+The second is keyed by the **group**, not by a parameter, because no single
+value is at fault. Every group member is merged over its stored value before the
+check runs, so sending one weight is validated against the four you did not
+send — which is the point. Two individually-legal saves could otherwise leave
+the weights summing to 0.9, lowering every claim's score in the system with
+nothing on screen to say so.
+
+The same `422` carries an unknown key (`"is not a configurable parameter"`), a
+derived key, and one owned by another endpoint — the last with a message naming
+where to write it instead. Nothing is written when any key in the request fails:
+the whole set is validated first, then committed in one transaction.
+
+**The cross-field rules**
+
+| Rule | Applies to |
+|---|---|
+| Sum to exactly 1.00 | `scoring.weight_*`, `scoring.harm_weight_*`, `csi.weight_*`, `overview.treemap_weight_*` |
+| Hard ceiling 0.25 | `scoring.harm_weight_policy_disruption` — PRD 6.2.4's bias guardrail against scoring criticism of a government's own policy as harm. Enforced, not advised. |
+| Strictly ordered | `scoring.velocity_zscore_max` > `..._min`; `csi.band_watch_ceiling` > `csi.band_risky_ceiling` |
+
+---
+
+## DELETE /api/v1/settings/parameters/{key}
+
+Restores one parameter to its documented default by removing its stored row.
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/settings/parameters/csi.window_days \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**200 OK** — returns the refreshed catalog.
+
+Deleting the row rather than writing the default back is deliberate: a parameter
+with no row follows the specification if the specification is ever revised,
+while one holding a copy of yesterday's default silently would not. The reset is
+still recorded in `cis_setting_history`.
+
+Idempotent: resetting an already-default parameter changes nothing and writes no
+history row.
+
 ---
 
 ## GET /api/v1/settings
@@ -355,9 +549,11 @@ curl -X POST http://localhost:8080/api/v1/admin/snapshot-scores \
 Returns `0` when the watchlist is empty — only watched claims are captured, since
 they are the only ones F3 charts.
 
-Note this captures *current* scores; it does not recompute them. The hourly cron
-job calls the AI service's rescore first — see below — so a manual snapshot
-straight after a manual rescore reproduces what the cron does.
+Note this captures *current* scores; it does not recompute them — and neither
+does the hourly cron job, which runs exactly this and nothing more. Every path
+that can change a score already recomputes it on the AI side, so there is no
+rescore to sequence before the capture. See
+[CRON_JOB.md](../local_docs/CRON_JOB.md).
 
 ---
 
@@ -376,16 +572,20 @@ curl -X POST http://localhost:8080/api/v1/admin/rescore \
 { "success": true, "message": "claims rescored", "data": { "claims_rescored": 4 } }
 ```
 
-**Why this exists.** A claim's score moves with wall-clock time even when
-nothing new is ingested: NPR drifts as opposing posts age out of the rolling
-window, which changes the discount factor and therefore `final_claim_score`. But
-nothing recomputes that on a schedule — the AI service has no cron of its own,
-and clustering only runs when content arrives. So the backend's hourly snapshot
-job calls this **first** and captures afterwards; without that, the F3 trend
-chart would plot the same number every hour, a horizontal line by construction.
+**Why this exists.** Not for the hourly job — that no longer calls it. The AI
+pipeline rescores a claim whenever its inputs move: an ingest that attaches a
+statement re-runs clustering, which recomputes R/V/F/H/EI, NPR and the discount
+for every claim it touched (and every sibling whose topic-Reach normalisation
+shifted), and a harm confirmation re-runs the same pass for that one claim.
 
-This endpoint is the same trigger, run by hand. It runs on
-`AI_SERVICE_LONG_TIMEOUT`.
+What that leaves uncovered is a change to what a score *means* rather than to
+what goes into it: retuning the composite weights or the discount gamma in F4
+alters every stored `final_claim_score` without touching any claim's inputs.
+Call this afterwards to bring the stored numbers back in line with the new
+configuration. That is a deliberate operator action, which is exactly the shape
+of thing that should not be happening silently every hour.
+
+It runs on `AI_SERVICE_LONG_TIMEOUT`.
 
 **503** when `AI_SERVICE_URL` is unset — every score column belongs to the AI
 service.

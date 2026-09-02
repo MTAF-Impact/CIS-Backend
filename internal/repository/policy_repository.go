@@ -159,32 +159,6 @@ func (r *PolicyRepository) ListYears(ctx context.Context) ([]int, error) {
 	return years, err
 }
 
-// FindDueForRollout returns policies whose rolled-out date has arrived but
-// whose status still says otherwise (US41).
-func (r *PolicyRepository) FindDueForRollout(ctx context.Context, asOf time.Time) ([]models.CISPolicy, error) {
-	var policies []models.CISPolicy
-	err := r.db.WithContext(ctx).
-		Where("status = ?", models.PolicyStatusNotRolledOut).
-		Where("rolled_out_date <= ?", asOf.Format("2006-01-02")).
-		Find(&policies).Error
-	return policies, err
-}
-
-// MarkRolledOut flips the given policies to Rolled Out.
-func (r *PolicyRepository) MarkRolledOut(ctx context.Context, ids []uuid.UUID) (int64, error) {
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	res := r.db.WithContext(ctx).
-		Model(&models.CISPolicy{}).
-		Where("id IN ?", ids).
-		Updates(map[string]any{
-			"status":     models.PolicyStatusRolledOut,
-			"updated_at": time.Now().UTC(),
-		})
-	return res.RowsAffected, res.Error
-}
-
 // FindPendingMatchmaking returns policies whose AI matchmaking has not yet
 // completed, used to retry stuck jobs.
 //

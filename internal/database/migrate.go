@@ -3,7 +3,6 @@ package database
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"time"
 
@@ -187,36 +186,39 @@ func warnMissingAITables(db *gorm.DB) {
 }
 
 // seedSettings inserts the F4 defaults only when absent, so an operator's saved
-// threshold survives every restart.
+// value survives every restart.
+//
+// Every dynamically-configurable parameter is seeded from models.ConfigParams —
+// the same registry that drives validation, the catalog endpoint and
+// docs/sql/03_dynamic_parameters.sql — rather than from a second list here. The
+// SQL script exists for the Supabase console; this is the same seed applied on
+// boot, so a deployment that ran neither still starts on the documented
+// defaults.
 func seedSettings(db *gorm.DB) error {
-	defaults := []models.CISSetting{
-		{
-			Key:         models.SettingAlertThreshold,
-			Value:       strconv.FormatFloat(models.DefaultAlertThreshold, 'f', -1, 64),
-			ValueType:   "number",
-			Description: "Global FinalClaimScore threshold (0-100) deciding Over/Under Threshold on the Alert page (PRD US32).",
-		},
-		{
-			Key:         models.SettingClaimsLastFetchedAt,
-			Value:       time.Now().UTC().Format(time.RFC3339),
-			ValueType:   "timestamp",
-			Description: "Timestamp shown as 'last fetched' on the Existing Claim section (PRD US9/US33).",
-		},
-		{
-			Key:       models.SettingMonitoredCity,
-			Value:     models.DefaultMonitoredCity,
-			ValueType: "string",
-			Description: "The single Indonesian city this instance monitors (PRD v1.5, US65). " +
-				"Scopes every city-level metric on the F6 Overview page.",
-		},
-		{
-			Key:       models.SettingCityTimezone,
-			Value:     models.DefaultCityTimezone,
-			ValueType: "string",
-			Description: "IANA timezone for the city-local half of every F5 report footer timestamp (PRD 10.8). " +
-				"The PRD requires 'UTC and city-local time' on every page but never names the city.",
-		},
+	defaults := make([]models.CISSetting, 0, len(models.ConfigParams)+1)
+
+	for _, p := range models.ConfigParams {
+		// A derived parameter has no row of its own: it is computed from another
+		// one on read, and storing a copy would let the two disagree.
+		if p.Derived {
+			continue
+		}
+		defaults = append(defaults, models.CISSetting{
+			Key:         p.Key,
+			Value:       p.Default,
+			ValueType:   p.ValueType(),
+			Description: p.Description,
+		})
 	}
+
+	// Not a configurable parameter: operational state the system writes for
+	// itself (US9/US33), which is why it is absent from the registry.
+	defaults = append(defaults, models.CISSetting{
+		Key:         models.SettingClaimsLastFetchedAt,
+		Value:       time.Now().UTC().Format(time.RFC3339),
+		ValueType:   "timestamp",
+		Description: "Timestamp shown as 'last fetched' on the Existing Claim section (PRD US9/US33).",
+	})
 
 	for i := range defaults {
 		s := defaults[i]
@@ -228,6 +230,7 @@ func seedSettings(db *gorm.DB) error {
 			return err
 		}
 	}
+	log.Printf("[migrate] seeded %d configuration keys (existing values untouched)", len(defaults))
 	return nil
 }
 

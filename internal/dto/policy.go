@@ -54,6 +54,14 @@ type UpdatePolicyRequest struct {
 	Name          *string `json:"name" validate:"omitempty,min=2,max=500"`
 	RolledOutDate *string `json:"rolled_out_date" validate:"omitempty,datetime=2006-01-02"`
 	Description   *string `json:"description" validate:"omitempty,max=5000"`
+	// Status is the rollout status (US41). Editing the date alone never moves
+	// it: the transition is a human decision, so it has to be stated.
+	Status *string `json:"status" validate:"omitempty,oneof=rolled_out not_rolled_out"`
+}
+
+// UpdatePolicyStatusRequest is the body of PUT /api/v1/policies/:id/status.
+type UpdatePolicyStatusRequest struct {
+	Status string `json:"status" validate:"required,oneof=rolled_out not_rolled_out"`
 }
 
 // PolicyProcessingStatus is the lightweight payload the F2 card polls while the

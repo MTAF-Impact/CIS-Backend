@@ -29,7 +29,7 @@ sections are read together on every load.
 
 | Query | Default | Notes |
 |---|---|---|
-| `limit` | `5` | Size of the O3 leaderboard. US70's section heading says "Top 10" and its detail says top 5; the detail wins and this parameter settles the difference without a redeploy. |
+| `limit` | `overview.top_policy_limit` (`5`) | Overrides the size of the O3 leaderboard for one request. US70's section heading says "Top 10" and its detail says top 5; the detail wins, and the setting — not this parameter — is where that answer lives. See [FE_DYNAMIC_PARAMETER.md](../local_docs/FE_DYNAMIC_PARAMETER.md). |
 
 ```bash
 curl "http://localhost:8080/api/v1/overview" -H "Authorization: Bearer $TOKEN"
@@ -70,7 +70,7 @@ curl "http://localhost:8080/api/v1/overview" -H "Authorization: Bearer $TOKEN"
       "window_end": "2026-09-01T09:00:00Z",
       "window_days": 7,
       "minimum_volume": 100,
-      "risk_threshold": 50,
+      "risk_threshold": 70,
       "weight_bcs": 0.5,
       "weight_risk_load": 0.5
     },
@@ -119,20 +119,30 @@ escalating on missing data is the one direction that cannot be defended.
 ### O1b — `sentiment`, the Climate Sentiment Index (PRD 6.6, US68)
 
 ```
-CSI            = BCS_normalized × 0.5 + (100 − RiskLoad) × 0.5
+CSI            = BCS_normalized × w_bcs + (100 − RiskLoad) × w_risk
 BCS            = (positive − negative) / total          → −1 … +1
 BCS_normalized = (BCS + 1) / 2 × 100                    → 0 … 100
-RiskLoad       = Σ(FinalClaimScore_i × Volume_i) / total, for claims scoring ≥ 50
+RiskLoad       = Σ(FinalClaimScore_i × Volume_i) / total, for claims ≥ risk_threshold
 ```
 
-- **Window** — a 7-day rolling average (PRD 6.6.3), so one viral event cannot
-  swing the headline figure.
-- **`momentum`** — the same index computed over a window lagged 24 h, giving the
-  direction-of-change indicator. `null` when the lagged window is itself below
-  the minimum volume.
-- **`band`** — `risky` / `watch` / `healthy` for the red/amber/green gauge, split
-  into equal thirds. The PRD specifies the banding without cut points; these are
-  documented rather than hidden.
+Every parameter of the index is admin-configurable and echoed in the response,
+so a client never has to assume the defaults: `weight_bcs`, `weight_risk_load`,
+`window_days`, `minimum_volume` and `risk_threshold` all describe the
+computation that produced the `score` beside them.
+
+- **Window** — `csi.window_days`, a 7-day rolling average by default (PRD
+  6.6.3), so one viral event cannot swing the headline figure.
+- **`risk_threshold`** — **derived from the global alert threshold**, not stored
+  separately (AP-20). It is not the PRD's recommended 50: making it mirror
+  `alert_threshold` is what stops "elevated risk" meaning one thing on the Alert
+  page and another on this gauge. Change it by changing the alert threshold.
+- **`momentum`** — the same index computed over a window lagged
+  `csi.momentum_lag_hours` (24 h by default), giving the direction-of-change
+  indicator. `null` when the lagged window is itself below the minimum volume.
+- **`band`** — `risky` / `watch` / `healthy` for the red/amber/green gauge, cut
+  at `csi.band_risky_ceiling` and `csi.band_watch_ceiling` (equal thirds by
+  default). The PRD specifies the banding without cut points; these are
+  documented and configurable rather than hidden.
 - **Higher is healthier.** RiskLoad is inverted because it reads "higher is
   worse"; inverting aligns it with BCS so the gauge has one direction.
 - Every component is returned beside the headline number, for the same reason
@@ -156,13 +166,18 @@ they are computed from `claims`, not from the content stream.
 One box per **Existing/Generic-claim topic**; Synthetic topics are excluded, so
 the treemap cannot be dominated by predictions. Returned largest first.
 
-`box_size` is the 0–100 area weight. US69 leaves the formula open and proposes a
-default, which is what is implemented and published on every box:
+`box_size` is the 0–100 area weight. US69 leaves the formula open and proposes
+an equal split, which is the default:
 
 ```
-box_size = 0.5 × (above_threshold_count / max_above_threshold_count × 100)
-         + 0.5 × (average_score          / max_average_score          × 100)
+box_size = w_count × (above_threshold_count / max_above_threshold_count × 100)
+         + w_score × (average_score          / max_average_score          × 100)
 ```
+
+`w_count` and `w_score` are `overview.treemap_weight_above_count` and
+`overview.treemap_weight_avg_score`, both `0.5` by default and constrained to
+sum to 1.00. US69's open question is therefore answered by a setting rather than
+by a constant. The same formula ranks O3.
 
 Each input is normalised against the largest topic **in the current set**, not
 against a fixed ceiling — the count of above-threshold claims has no natural

@@ -17,7 +17,21 @@ The backend never recalculates or writes a score. What it owns is the
 - returning every component **together with** the collapsed score (US23)
 
 Implementation: `internal/scoring/scoring.go`, applied in
-`buildBreakdown` (`internal/service/claim_service.go`).
+`ClaimService.buildBreakdown` (`internal/service/claim_service.go`).
+
+### The weights are configuration, not constants
+
+Every weight and threshold below is admin-editable in F4 and stored in
+`cis_settings`; the numbers shown here are the seeded defaults. The backend
+reads them live — including the plain-language formula tooltip, which is
+generated from the current values rather than written out, so the words and the
+numbers cannot drift apart after a retune.
+
+**Both services read the same rows**, which is the point: a weight the API
+published but the AI service did not score under would make the breakdown a
+description of a ranking the system does not perform. See
+`docs/local_docs/FE_DYNAMIC_PARAMETER.md` and
+`docs/local_docs/AI_DYNAMIC_PARAMETER.md`.
 
 **Only Existing/Generic claims are scored** (US4). Synthetic claims have no
 score, and the API omits the fields rather than sending zeros.
@@ -64,11 +78,13 @@ that the UI not style it in a way that overstates its influence.
 ## Composite Claim Score (PRD 6.3)
 
 ```
-ClaimScore = 0.15·R + 0.15·V + 0.30·F + 0.30·H + 0.10·EI
+ClaimScore = 0.15·R + 0.15·V + 0.30·F + 0.30·H + 0.10·EI      (defaults)
 ```
 
 Weights sum to exactly 1.00 and every input is bounded to [0, 100], so
-`claim_score` is guaranteed to land in [0, 100].
+`claim_score` is guaranteed to land in [0, 100]. The sum is enforced on save
+(`scoring.weight_*`, keys AP-01…AP-05): a set that does not total 1.00 is
+rejected, because one that did would silently deflate every score in the bank.
 
 **Weight rationale:** Falseness and Harm carry 0.60 combined because CIS is a
 risk-triage tool, not a virality tracker. Reach and Velocity contribute 0.30 for
@@ -78,7 +94,7 @@ These are returned as `weights` in every `score_breakdown` so the UI can explain
 the ranking without hardcoding constants.
 
 **When F is `null`, the AI service drops its weight and renormalises the other
-four over 0.70** rather than substituting `0`, which would assert "confirmed
+four over `1 − weight_falseness`** rather than substituting `0`, which would assert "confirmed
 true" and depress every claim in the bank. The `weights` this backend publishes
 are the nominal five above, so on a claim with no F they describe the formula
 rather than that claim's own arithmetic. Given the `official_sources` corpus is
@@ -98,8 +114,14 @@ DiscountFactor = 1 − (γ × NPR)              with γ = 0.5  ⇒ ∈ [0.5, 1]
 FinalClaimScore = ClaimScore × DiscountFactor                            ∈ [0,100]
 ```
 
-γ caps the dampening: even total pushback (NPR = 1) reduces a score by at most
-50%. Measured over a rolling 24–48 hour window.
+γ (`scoring.discount_gamma`, AP-15) caps the dampening: at the default 0.5, even
+total pushback (NPR = 1) reduces a score by at most 50%. `DiscountFactor` is
+clamped to `[1 − γ, 1]` rather than to a hardcoded `[0.5, 1]`, so lowering γ
+narrows the floor with it instead of admitting values the configuration says are
+impossible.
+
+The rolling window is `scoring.npr_window_hours` (AP-14, default 36 h, within
+PRD 6.4.3's recommended 24–48 h band).
 
 Stance classification: `supporting` spreads the claim, `opposing` disputes or
 corrects it, `neutral` mentions it without taking a position and is **excluded**
@@ -173,8 +195,9 @@ designed behaviour, not a pipeline that has fallen behind.
 Two additions in v1.5 sit on the same object:
 
 - **`formula`** — the plain-language sentence behind the US23 info-tooltip,
-  generated from the same weight constants as the score, so the explanation and
-  the arithmetic cannot drift apart.
+  generated from the same configured weights the score is computed under, so the
+  explanation and the arithmetic cannot drift apart — including after an admin
+  retunes them in F4.
 - **`harm_breakdown.edit`** — the audit trail of a human override: who, when,
   and the four sub-scores plus the composite `harm` as they were before. Present
   only once an override has happened, which is what lets the UI mark an edited H
@@ -198,22 +221,27 @@ the AI service does not roll up.
 CSI            = BCS_normalized × 0.5 + (100 − RiskLoad) × 0.5
 BCS            = (positive − negative) / total          → −1 … +1
 BCS_normalized = (BCS + 1) / 2 × 100                    → 0 … 100
-RiskLoad       = Σ(FinalClaimScore_i × Volume_i) / total, for claims scoring ≥ 50
+RiskLoad       = Σ(FinalClaimScore_i × Volume_i) / total, for claims ≥ RiskThreshold
 ```
 
-The formulas and their constants live in `internal/scoring/csi.go`, next to the
-claim weights they mirror: PRD 6.5's transparency requirement applies here too,
-so the one place the constants are written must be the one place they are
-applied.
+The formulas live in `internal/scoring/csi.go`, next to the claim weights they
+mirror, and take their parameters as a `CSIParams` rather than reading package
+constants: PRD 6.5's transparency requirement applies here too, so the one place
+the arithmetic is written must be the one place it is applied.
 
-| Parameter | Value | Source |
-|---|---|---|
-| Component weights | 0.5 / 0.5 | PRD 6.6 |
-| `RiskThreshold` | 50 | PRD 6.6.2 recommended default |
-| Rolling window | 7 days | PRD 6.6.3 |
-| Momentum lag | 24 h | PRD 6.6.3 |
-| Minimum volume | 100 items | PRD 6.6.3 ("a defined minimum") |
-| Gauge bands | equal thirds | Not specified by the PRD; documented, not hidden |
+| Parameter | Setting key | Default | Source |
+|---|---|---|---|
+| Component weights | `csi.weight_bcs`, `csi.weight_risk_load` | 0.5 / 0.5 | PRD 6.6 (AP-18, AP-19) |
+| `RiskThreshold` | *derived from* `alert_threshold` | 70 | PRD 6.6.2 (AP-20) |
+| Rolling window | `csi.window_days` | 7 days | PRD 6.6.3 |
+| Momentum lag | `csi.momentum_lag_hours` | 24 h | PRD 6.6.3 |
+| Minimum volume | `csi.minimum_volume` | 100 items | PRD 6.6.3 ("a defined minimum") |
+| Gauge bands | `csi.band_risky_ceiling`, `csi.band_watch_ceiling` | 33.33 / 66.67 | Not specified by the PRD; documented, not hidden |
+
+**`RiskThreshold` has no key of its own and is no longer 50.** AP-20 makes it a
+derived value that always equals the global alert threshold, so "elevated risk"
+means the same thing on the Alert page and on this gauge. It is served read-only
+beside `alert_threshold` in the F4 catalog, and it moves the moment that does.
 
 `Volume_i` counts a claim's Supporting **and** Opposing content only, per
 6.6.2's definition; neutral content stays in the BCS denominator, where the

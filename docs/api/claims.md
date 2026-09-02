@@ -289,7 +289,15 @@ number is never served without its inputs.
 constants. **New in v1.5:** so is `formula`, the plain-language sentence behind
 the US23 info-tooltip. It is served rather than written into the frontend so the
 words and the weights can never drift apart — both are generated from the same
-constants in `internal/scoring`.
+values the score was computed under.
+
+**Both are live configuration**, not constants: the composite weights, the harm
+sub-weights and the discount cap are admin-editable in F4
+(`PUT /api/v1/settings/parameters`), so the numbers in this example are the
+seeded defaults rather than fixed values. Read them from the response; a
+frontend that hardcodes `0.15 / 0.15 / 0.30 / 0.30 / 0.10` will explain the old
+ranking after the first retune. See
+[FE_DYNAMIC_PARAMETER.md](../local_docs/FE_DYNAMIC_PARAMETER.md).
 
 **A note on this worked example:** `reach`, `velocity`, `falseness`, `harm`,
 `harm_breakdown`, and `claim_score` are all written by the AI service and only

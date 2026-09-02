@@ -405,3 +405,7 @@ func (c *Client) LongTimeout() time.Duration { return c.cfg.LongTimeout }
 // MatchmakingStaleAfter exposes how long a policy may sit in "processing"
 // before the retry sweep treats its Flow 2 callback as lost.
 func (c *Client) MatchmakingStaleAfter() time.Duration { return c.cfg.MatchmakingStaleAfter }
+
+// MatchmakingMaxAttempts exposes how many times one policy's matchmaking may be
+// re-queued before it stays failed (AI_MATCHMAKING_MAX_ATTEMPTS).
+func (c *Client) MatchmakingMaxAttempts() int { return c.cfg.MatchmakingMaxAttempts }

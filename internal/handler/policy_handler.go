@@ -127,6 +127,10 @@ func (h *PolicyHandler) Create(c *fiber.Ctx) error {
 }
 
 // Update handles PATCH /api/v1/policies/:id.
+//
+// Changing `rolled_out_date` no longer moves the rollout status: since the
+// nightly flip was removed, the status is a human judgement and has to be
+// stated, either here as `status` or through PUT /policies/:id/status.
 func (h *PolicyHandler) Update(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -146,6 +150,33 @@ func (h *PolicyHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 	return response.OK(c, "public policy updated", card)
+}
+
+// UpdateStatus handles PUT /api/v1/policies/:id/status (US41).
+//
+// The rollout status is set by whoever knows whether the policy actually
+// launched. It used to be derived nightly from the rolled-out date; a date is a
+// plan, and plans slip, so a delayed policy was reported as live and flipped
+// back every night after somebody corrected it.
+func (h *PolicyHandler) UpdateStatus(c *fiber.Ctx) error {
+	id, err := parsePathUUID(c, "id")
+	if err != nil {
+		return err
+	}
+
+	var req dto.UpdatePolicyStatusRequest
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.BadRequest("request body must be valid JSON").Wrap(err)
+	}
+	if err := dto.Validate(req); err != nil {
+		return err
+	}
+
+	card, err := h.policies.SetStatus(c.UserContext(), id, req.Status)
+	if err != nil {
+		return err
+	}
+	return response.OK(c, "policy rollout status updated", card)
 }
 
 // ReplaceFile handles PUT /api/v1/policies/:id/file, swapping the policy's

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,10 +19,6 @@ import (
 	"github.com/cis/cis-backend/internal/repository"
 	"github.com/cis/cis-backend/internal/storage"
 )
-
-// maxMatchmakingAttempts caps how many times a policy's AI matchmaking job is
-// retried before it stays failed and needs a manual /rematch.
-const maxMatchmakingAttempts = 3
 
 // PolicyService serves F2, the Public Policy Bank.
 //
@@ -223,7 +220,10 @@ func (s *PolicyService) Create(ctx context.Context, in CreatePolicyInput) (*dto.
 		Name:          in.Name,
 		Description:   in.Description,
 		RolledOutDate: in.RolledOutDate,
-		// US41: status is derived automatically at creation, never entered by
+		// US41: the status a new policy starts on is derived from its date, so
+		// the common case needs no second step. It is only a starting value —
+		// from here it moves when somebody moves it (PUT /policies/:id/status),
+		// not on a clock.
 		// the user, and re-evaluated daily by the cron job.
 		Status:        models.DeriveStatus(in.RolledOutDate, now),
 		FileName:      in.FileName,
@@ -443,8 +443,14 @@ func (s *PolicyService) ProcessingStatus(ctx context.Context, id uuid.UUID) (*dt
 	return status, nil
 }
 
-// Update applies an edit to a policy's metadata, re-deriving the rollout status
-// when the date changes (US41).
+// Update applies an edit to a policy's metadata (US41).
+//
+// Editing the date does NOT move the status. The two were coupled while a
+// nightly job owned the transition; now that the rollout is a human decision,
+// re-deriving here would silently overwrite it — an operator who marked a
+// delayed policy "Not Rolled Out" would find it flipped back by an unrelated
+// correction to its date. Status changes only where someone changes it: here,
+// with an explicit `status`, or through PUT /policies/:id/status.
 func (s *PolicyService) Update(ctx context.Context, id uuid.UUID, req dto.UpdatePolicyRequest) (*dto.PolicyCard, error) {
 	if _, err := s.policies.FindByID(ctx, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -466,7 +472,13 @@ func (s *PolicyService) Update(ctx context.Context, id uuid.UUID, req dto.Update
 			return nil, apperr.Unprocessable("rolled_out_date must be a YYYY-MM-DD date")
 		}
 		updates["rolled_out_date"] = date
-		updates["status"] = models.DeriveStatus(date, time.Now().UTC())
+	}
+	if req.Status != nil {
+		status, err := normalizeRolloutStatus(*req.Status)
+		if err != nil {
+			return nil, err
+		}
+		updates["status"] = status
 	}
 
 	if len(updates) == 0 {
@@ -625,27 +637,54 @@ func (s *PolicyService) Download(ctx context.Context, id uuid.UUID) (*dto.Downlo
 	return meta, body, nil
 }
 
-// RefreshRolloutStatuses flips policies whose rolled-out date has arrived
-// (US41). Invoked by the daily cron job and exposed for manual triggering.
-func (s *PolicyService) RefreshRolloutStatuses(ctx context.Context) (int64, error) {
-	due, err := s.policies.FindDueForRollout(ctx, time.Now().UTC())
+// SetStatus records an operator's rollout decision for one policy (US41).
+//
+// # Why this is a human action and not a scheduled one
+//
+// A rolled-out date is a plan, and plans slip. A nightly job comparing the date
+// against the clock cannot tell a policy that actually launched from one that
+// was postponed the week before, so it reported every delayed policy as live —
+// and, worse, did it again the next night after somebody corrected it. The date
+// is still what the card shows and still what seeds the initial status at
+// creation; what it no longer does is decide, on its own, what the world looks
+// like.
+func (s *PolicyService) SetStatus(ctx context.Context, id uuid.UUID, status string) (*dto.PolicyCard, error) {
+	normalized, err := normalizeRolloutStatus(status)
 	if err != nil {
-		return 0, apperr.Internal("could not find policies due for rollout").Wrap(err)
-	}
-	if len(due) == 0 {
-		return 0, nil
+		return nil, err
 	}
 
-	ids := make([]uuid.UUID, 0, len(due))
-	for _, p := range due {
-		ids = append(ids, p.ID)
+	if _, err := s.policies.FindByID(ctx, id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NotFound("policy not found")
+		}
+		return nil, apperr.Internal("could not load policy").Wrap(err)
 	}
 
-	updated, err := s.policies.MarkRolledOut(ctx, ids)
-	if err != nil {
-		return 0, apperr.Internal("could not update policy statuses").Wrap(err)
+	if err := s.policies.Update(ctx, id, map[string]any{"status": normalized}); err != nil {
+		return nil, apperr.Internal("could not update the policy status").Wrap(err)
 	}
-	return updated, nil
+
+	row, err := s.policies.FindByID(ctx, id)
+	if err != nil {
+		return nil, apperr.Internal("could not reload the policy").Wrap(err)
+	}
+	card := toPolicyCard(*row)
+	return &card, nil
+}
+
+// normalizeRolloutStatus accepts either stored value and rejects anything else,
+// naming both options rather than only the fact that this one was wrong.
+func normalizeRolloutStatus(status string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case models.PolicyStatusRolledOut:
+		return models.PolicyStatusRolledOut, nil
+	case models.PolicyStatusNotRolledOut:
+		return models.PolicyStatusNotRolledOut, nil
+	default:
+		return "", apperr.Unprocessable(
+			"status must be %q or %q", models.PolicyStatusRolledOut, models.PolicyStatusNotRolledOut)
+	}
 }
 
 // RetryStuckMatchmaking re-queues policies whose matchmaking never completed.
@@ -660,7 +699,7 @@ func (s *PolicyService) RefreshRolloutStatuses(ctx context.Context) (int64, erro
 // AI_MATCHMAKING_STALE_AFTER is re-queued too.
 //
 // runMatchmaking bumps processing_attempts the moment it starts, which both
-// bounds this loop through maxMatchmakingAttempts and stops the next sweep from
+// bounds this loop through AI_MATCHMAKING_MAX_ATTEMPTS and stops the next sweep from
 // picking up a policy this one has already re-queued.
 //
 // force is deliberately not set: a run that genuinely succeeded and only lost
@@ -671,7 +710,7 @@ func (s *PolicyService) RetryStuckMatchmaking(ctx context.Context) (int, error) 
 	}
 
 	staleBefore := time.Now().UTC().Add(-s.ai.MatchmakingStaleAfter())
-	stuck, err := s.policies.FindPendingMatchmaking(ctx, maxMatchmakingAttempts, 20, staleBefore)
+	stuck, err := s.policies.FindPendingMatchmaking(ctx, s.ai.MatchmakingMaxAttempts(), 20, staleBefore)
 	if err != nil {
 		return 0, apperr.Internal("could not find pending matchmaking jobs").Wrap(err)
 	}

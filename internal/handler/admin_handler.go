@@ -106,6 +106,64 @@ func (h *SettingHandler) SetCity(c *fiber.Ctx) error {
 	return response.OK(c, "monitored city updated", city)
 }
 
+// Parameters handles GET /api/v1/settings/parameters.
+//
+// The whole dynamic-parameter surface in one call: two tiers, the sections
+// inside them, and every parameter's definition alongside its current value.
+// F4 renders its form from this rather than from a second copy of the
+// specification, which is what stops a bound in the form and the bound the
+// server enforces from drifting apart.
+func (h *SettingHandler) Parameters(c *fiber.Ctx) error {
+	return response.OK(c, "configurable parameters", h.settings.ConfigCatalog(c.UserContext()))
+}
+
+// UpdateParameters handles PUT /api/v1/settings/parameters.
+//
+// A partial update: only the keys present in the body change, and the rest keep
+// their stored values. The response is the full refreshed catalog, so a form
+// that saves one weight can re-render the running totals of the group it
+// belongs to without a second request.
+//
+// A 422 carries per-key messages. Two shapes reach it: a value outside its own
+// bounds, keyed by the parameter; and a set that is individually valid but
+// inconsistent — the five composite weights no longer summing to 1.00, say —
+// keyed by the group's name.
+func (h *SettingHandler) UpdateParameters(c *fiber.Ctx) error {
+	var req dto.UpdateConfigParamsRequest
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.BadRequest("request body must be valid JSON").Wrap(err)
+	}
+	if err := dto.Validate(req); err != nil {
+		return err
+	}
+
+	catalog, err := h.settings.UpdateConfigParams(
+		c.UserContext(), req.Parameters, middleware.UserIDFromContext(c))
+	if err != nil {
+		return err
+	}
+	return response.OK(c, "configuration updated", catalog)
+}
+
+// ResetParameter handles DELETE /api/v1/settings/parameters/:key.
+//
+// Restores one parameter to its documented default by removing the stored row,
+// rather than by writing the default back as a value. The distinction matters:
+// a parameter with no row follows the specification if the specification is
+// ever revised, while one holding a copy of yesterday's default silently would
+// not.
+func (h *SettingHandler) ResetParameter(c *fiber.Ctx) error {
+	key := strings.TrimSpace(c.Params("key"))
+	if key == "" {
+		return apperr.BadRequest("a parameter key is required")
+	}
+
+	if err := h.settings.ResetConfigParam(c.UserContext(), key, middleware.UserIDFromContext(c)); err != nil {
+		return err
+	}
+	return response.OK(c, "parameter reset to its default", h.settings.ConfigCatalog(c.UserContext()))
+}
+
 // AdminHandler serves the F4 MVP test utilities.
 type AdminHandler struct {
 	admin  *service.AdminService

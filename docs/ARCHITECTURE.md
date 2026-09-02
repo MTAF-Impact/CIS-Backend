@@ -142,14 +142,28 @@ Cancellation is driven by request context instead.
 
 | Job | Default schedule | Purpose |
 |---|---|---|
-| Policy rollout | `0 1 * * *` | Flip `not_rolled_out → rolled_out` once the date passes (US41) |
-| Score snapshot | `0 * * * *` | Ask the AI service to rescore, capture watched claims' scores for the F3 chart, prune beyond ~400 days |
+| Score snapshot | `0 * * * *` | Capture watched claims' current scores for the F3 chart, evaluate threshold crossings, prune past `alerts.score_snapshot_retention_days` |
 | Matchmaking retry | `*/15 * * * *` | Re-queue matchmaking that failed or whose callback never arrived |
 | Detection tick | `20 * * * *` | F5: dispatch the scheduled sweep if it is due, plus the velocity trigger (PRD 10.5.8) |
 | Snapshot retention | `40 2 * * *` | F5: purge evidence snapshots past their horizon, except where a report was generated (PRD 10.9.1 rule 7) |
 
-The rollout and matchmaking-retry jobs also run once at boot, so a server that
-was down over a scheduled window catches up instead of waiting for the next tick.
+The matchmaking-retry job also runs once at boot, so a server that was down over
+a scheduled window catches up instead of waiting for the next tick.
+
+**Two jobs were removed or narrowed, both for the same reason** — a scheduled
+guess is worse than the thing that actually knows:
+
+- *Policy rollout* is gone. It flipped a policy to "Rolled Out" once its date
+  arrived, but a rolled-out date is a plan, and plans slip. It is now
+  `PUT /api/v1/policies/:id/status`.
+- *Score snapshot* no longer asks the AI service to rescore first. Every path
+  that can change a score already recomputes it on the AI side — an ingest that
+  attaches a statement re-runs clustering, which rescores the claim and every
+  sibling whose topic-Reach normalisation moved. `POST /api/v1/admin/rescore`
+  remains for the one case those triggers miss: a weights change in F4, which
+  alters what stored scores *mean* without touching any claim's inputs.
+
+See `docs/local_docs/CRON_JOB.md`.
 
 **The detection tick is not the detection cadence.** The cadence is a detector
 setting an admin edits in F4 (1–24 h) and a cron spec is fixed when the

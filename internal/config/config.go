@@ -46,6 +46,17 @@ type AppConfig struct {
 	BodyLimitBytes int // resolved value in bytes; see UnlimitedBodyLimit
 	ReadTimeout    time.Duration
 	WriteTimeout   time.Duration
+
+	// SettingsCacheTTL bounds how stale a read of the F4 dynamic parameters may
+	// be (models.ConfigParams, service.SettingService).
+	//
+	// It is here rather than among those parameters themselves because it is a
+	// property of the deployment, not of the product: a single instance can
+	// hold a longer window safely, while several instances behind a load
+	// balancer see each other's writes only after it elapses. A process always
+	// invalidates its own cache on write, so this never delays what the admin
+	// who saved sees.
+	SettingsCacheTTL time.Duration
 }
 
 // IsProduction reports whether the app is running with production semantics.
@@ -138,6 +149,13 @@ type AIConfig struct {
 	// callback, so this is the only place a dropped result is recovered.
 	MatchmakingStaleAfter time.Duration
 
+	// MatchmakingMaxAttempts caps how many times one policy's matchmaking is
+	// re-queued before it stays failed and needs a manual /rematch. Without a
+	// cap a policy the AI service cannot process at all is retried every
+	// fifteen minutes forever, which turns one broken document into a standing
+	// load on the pipeline.
+	MatchmakingMaxAttempts int
+
 	// The AI service's route table is deliberately NOT here. Those paths are
 	// part of the contract between the two services rather than properties of
 	// this deployment, and they live as constants in
@@ -154,15 +172,24 @@ type AIConfig struct {
 func (a AIConfig) Enabled() bool { return a.BaseURL != "" }
 
 // CronConfig controls the background jobs.
+//
+// There is deliberately no policy-rollout spec. That job flipped a policy to
+// "Rolled Out" once its date arrived; a rolled-out date is a plan, and no job
+// comparing it against the clock can tell a policy that launched from one that
+// slipped. Rollout is now recorded by whoever knows — see
+// PUT /api/v1/policies/:id/status.
 type CronConfig struct {
-	Enabled           bool
-	PolicyRolloutSpec string // US41: flip Not Rolled Out -> Rolled Out
-	ScoreSnapshotSpec string // F3 chart history, preceded by an AI rescore
+	Enabled bool
+	// ScoreSnapshotSpec drives the F3 chart history. It captures the scores the
+	// AI pipeline has already computed; it does not trigger a rescore, because
+	// every path that changes a score already recomputes it. See
+	// scheduler.runScoreSnapshot.
+	ScoreSnapshotSpec string
 	// MatchmakingRetrySpec re-queues matchmaking jobs that failed or whose
-	// Flow 2 callback never arrived. It runs on its own, much more frequent
-	// schedule than the daily rollout job: a policy stranded on "Processing"
-	// shows a spinning badge and empty claim lists until it is re-queued, so
-	// waiting until the next day to notice is not acceptable.
+	// Flow 2 callback never arrived. It runs far more often than the daily
+	// jobs: a policy stranded on "Processing" shows a spinning badge and empty
+	// claim lists until it is re-queued, so waiting until the next day to
+	// notice is not acceptable.
 	MatchmakingRetrySpec string
 	// DetectionSpec is how often the F5 detection tick fires. It is NOT the
 	// detection cadence: PRD 10.5.8 makes that a detector setting an admin
@@ -186,13 +213,14 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		App: AppConfig{
-			Env:            getEnv("APP_ENV", "development"),
-			Port:           getEnv("APP_PORT", "8080"),
-			Name:           getEnv("APP_NAME", "CIS Backend"),
-			AllowedOrigins: getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"*"}),
-			BodyLimitBytes: resolveBodyLimit(getEnvInt("APP_BODY_LIMIT_BYTES", 0)),
-			ReadTimeout:    getEnvDuration("APP_READ_TIMEOUT", 5*time.Minute),
-			WriteTimeout:   getEnvDuration("APP_WRITE_TIMEOUT", 5*time.Minute),
+			Env:              getEnv("APP_ENV", "development"),
+			Port:             getEnv("APP_PORT", "8080"),
+			Name:             getEnv("APP_NAME", "CIS Backend"),
+			AllowedOrigins:   getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"*"}),
+			BodyLimitBytes:   resolveBodyLimit(getEnvInt("APP_BODY_LIMIT_BYTES", 0)),
+			ReadTimeout:      getEnvDuration("APP_READ_TIMEOUT", 5*time.Minute),
+			WriteTimeout:     getEnvDuration("APP_WRITE_TIMEOUT", 5*time.Minute),
+			SettingsCacheTTL: getEnvDuration("SETTINGS_CACHE_TTL", 30*time.Second),
 		},
 		DB: DBConfig{
 			URL:                  getEnv("DATABASE_URL", ""),
@@ -229,16 +257,16 @@ func Load() (*Config, error) {
 			LocalDir:           getEnv("STORAGE_LOCAL_DIR", "./uploads"),
 		},
 		AI: AIConfig{
-			BaseURL:               strings.TrimRight(getEnv("AI_SERVICE_URL", ""), "/"),
-			APIKey:                getEnv("AI_SERVICE_API_KEY", ""),
-			Timeout:               getEnvDuration("AI_SERVICE_TIMEOUT", 30*time.Second),
-			LongTimeout:           getEnvDuration("AI_SERVICE_LONG_TIMEOUT", 180*time.Second),
-			MatchmakingStaleAfter: getEnvDuration("AI_MATCHMAKING_STALE_AFTER", 30*time.Minute),
-			CallbackBaseURL:       strings.TrimRight(getEnv("BACKEND_PUBLIC_URL", ""), "/"),
+			BaseURL:                strings.TrimRight(getEnv("AI_SERVICE_URL", ""), "/"),
+			APIKey:                 getEnv("AI_SERVICE_API_KEY", ""),
+			Timeout:                getEnvDuration("AI_SERVICE_TIMEOUT", 30*time.Second),
+			LongTimeout:            getEnvDuration("AI_SERVICE_LONG_TIMEOUT", 180*time.Second),
+			MatchmakingStaleAfter:  getEnvDuration("AI_MATCHMAKING_STALE_AFTER", 30*time.Minute),
+			MatchmakingMaxAttempts: getEnvInt("AI_MATCHMAKING_MAX_ATTEMPTS", 3),
+			CallbackBaseURL:        strings.TrimRight(getEnv("BACKEND_PUBLIC_URL", ""), "/"),
 		},
 		Cron: CronConfig{
 			Enabled:              getEnvBool("CRON_ENABLED", true),
-			PolicyRolloutSpec:    getEnv("CRON_POLICY_ROLLOUT_SPEC", "0 1 * * *"),
 			ScoreSnapshotSpec:    getEnv("CRON_SCORE_SNAPSHOT_SPEC", "0 * * * *"),
 			MatchmakingRetrySpec: getEnv("CRON_MATCHMAKING_RETRY_SPEC", "*/15 * * * *"),
 			// Offset from the score snapshot job's :00 so the two do not
@@ -283,6 +311,12 @@ func (c *Config) validate() error {
 	}
 	if c.Auth.BcryptCost < 4 || c.Auth.BcryptCost > 31 {
 		return fmt.Errorf("BCRYPT_COST must be between 4 and 31, got %d", c.Auth.BcryptCost)
+	}
+	if c.AI.MatchmakingMaxAttempts < 1 {
+		return fmt.Errorf("AI_MATCHMAKING_MAX_ATTEMPTS must be at least 1, got %d", c.AI.MatchmakingMaxAttempts)
+	}
+	if c.App.SettingsCacheTTL < 0 {
+		return fmt.Errorf("SETTINGS_CACHE_TTL must not be negative, got %s", c.App.SettingsCacheTTL)
 	}
 	return nil
 }

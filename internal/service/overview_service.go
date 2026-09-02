@@ -14,18 +14,6 @@ import (
 	"github.com/cis/cis-backend/internal/scoring"
 )
 
-// TopPolicyLimit is the size of the O3 leaderboard (US70).
-//
-// The PRD's section heading says "Top 10 Hot Policies" and its detailed
-// description says top 5; US70 resolves the contradiction in favour of the
-// detail, and flags it. The endpoint accepts an explicit ?limit so the answer
-// to that open question is a query parameter rather than a redeploy.
-const TopPolicyLimit = 5
-
-// MoMWindowDays is the comparison window for the O2 modal's month-on-month
-// change (US69).
-const MoMWindowDays = 30
-
 // OverviewService serves F6, the Overview page (PRD v1.5, Section 11).
 //
 // It computes rather than reads: F6's numbers are aggregates over the same
@@ -54,6 +42,7 @@ func (s *OverviewService) Page(ctx context.Context, policyLimit int) (*dto.Overv
 		return nil, err
 	}
 	city := s.settings.MonitoredCity(ctx)
+	ranking := s.settings.OverviewRanking(ctx)
 	now := time.Now().UTC()
 
 	res := &dto.OverviewResponse{
@@ -88,12 +77,12 @@ func (s *OverviewService) Page(ctx context.Context, policyLimit int) (*dto.Overv
 	if err != nil {
 		return nil, apperr.Internal("could not aggregate claims by topic").Wrap(err)
 	}
-	res.Topics = buildTopicBoxes(topics)
+	res.Topics = buildTopicBoxes(topics, ranking)
 
 	if policyLimit <= 0 {
-		policyLimit = TopPolicyLimit
+		policyLimit = ranking.TopPolicyLimit
 	}
-	res.Policies, err = s.hotPolicies(ctx, city.Name, threshold, policyLimit)
+	res.Policies, err = s.hotPolicies(ctx, city.Name, threshold, policyLimit, ranking)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +123,7 @@ func (s *OverviewService) Topic(ctx context.Context, topicID uuid.UUID) (*dto.To
 	}
 
 	now := time.Now().UTC()
-	month := time.Duration(MoMWindowDays) * 24 * time.Hour
+	month := time.Duration(s.settings.OverviewRanking(ctx).MoMWindowDays) * 24 * time.Hour
 	current, err := s.overview.TopicScoreAverage(ctx, topicID, now.Add(-month), now)
 	if err != nil {
 		return nil, apperr.Internal("could not read this month's score history").Wrap(err)
@@ -160,18 +149,23 @@ func (s *OverviewService) Topic(ctx context.Context, topicID uuid.UUID) (*dto.To
 // sentimentIndex computes O1's Climate Sentiment Index over the 7-day rolling
 // window, with the 24h-lagged momentum indicator (PRD 6.6).
 func (s *OverviewService) sentimentIndex(ctx context.Context, city string, now time.Time) (*dto.SentimentIndex, error) {
-	window := time.Duration(scoring.CSIWindowDays) * 24 * time.Hour
+	params, err := s.settings.CSIParams(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	window := time.Duration(params.WindowDays) * 24 * time.Hour
 	from := now.Add(-window)
 
 	out := &dto.SentimentIndex{
 		Status:        dto.CSIStatusUnavailable,
 		WindowStart:   from,
 		WindowEnd:     now,
-		WindowDays:    scoring.CSIWindowDays,
-		MinimumVolume: scoring.CSIMinimumVolume,
-		RiskThreshold: scoring.CSIRiskThreshold,
-		WeightBCS:     scoring.WeightBCS,
-		WeightRisk:    scoring.WeightRiskLoad,
+		WindowDays:    params.WindowDays,
+		MinimumVolume: params.MinimumVolume,
+		RiskThreshold: params.RiskThreshold,
+		WeightBCS:     params.WeightBCS,
+		WeightRisk:    params.WeightRiskLoad,
 	}
 
 	if !s.overview.HasSentiment() {
@@ -180,7 +174,7 @@ func (s *OverviewService) sentimentIndex(ctx context.Context, city string, now t
 		return out, nil
 	}
 
-	current, err := s.computeCSI(ctx, city, from, now)
+	current, err := s.computeCSI(ctx, city, from, now, params)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +188,7 @@ func (s *OverviewService) sentimentIndex(ctx context.Context, city string, now t
 
 	// PRD 6.6.3: below the minimum activity threshold the index would report a
 	// falsely calm environment from low engagement, so it reports nothing.
-	if current.volumes.Total < scoring.CSIMinimumVolume {
+	if current.volumes.Total < params.MinimumVolume {
 		out.Status = dto.CSIStatusInsufficientData
 		out.Reason = "Not enough climate conversation in the window to compute a reliable index."
 		return out, nil
@@ -202,7 +196,7 @@ func (s *OverviewService) sentimentIndex(ctx context.Context, city string, now t
 
 	out.Status = dto.CSIStatusOK
 	out.Score = &current.csi
-	band := scoring.CSIBand(current.csi)
+	band := params.Band(current.csi)
 	out.Band = &band
 	out.BCS = &current.bcs
 	out.BCSNormalized = &current.bcsNormalized
@@ -211,12 +205,12 @@ func (s *OverviewService) sentimentIndex(ctx context.Context, city string, now t
 	// Momentum: the same index over a window lagged by 24h (PRD 6.6.3). A
 	// lagged window that is itself too thin yields no direction rather than a
 	// direction computed from noise.
-	lag := time.Duration(scoring.CSIMomentumLagHours) * time.Hour
-	previous, err := s.computeCSI(ctx, city, from.Add(-lag), now.Add(-lag))
+	lag := time.Duration(params.MomentumLagHours) * time.Hour
+	previous, err := s.computeCSI(ctx, city, from.Add(-lag), now.Add(-lag), params)
 	if err != nil {
 		return nil, err
 	}
-	if previous.volumes.Total >= scoring.CSIMinimumVolume {
+	if previous.volumes.Total >= params.MinimumVolume {
 		delta := current.csi - previous.csi
 		direction := directionOf(delta)
 		out.Momentum = &delta
@@ -234,7 +228,9 @@ type csiWindow struct {
 	csi           float64
 }
 
-func (s *OverviewService) computeCSI(ctx context.Context, city string, from, to time.Time) (csiWindow, error) {
+func (s *OverviewService) computeCSI(
+	ctx context.Context, city string, from, to time.Time, params scoring.CSIParams,
+) (csiWindow, error) {
 	var out csiWindow
 
 	volumes, err := s.overview.ConversationVolumes(ctx, city, from, to)
@@ -246,7 +242,7 @@ func (s *OverviewService) computeCSI(ctx context.Context, city string, from, to 
 		return out, nil
 	}
 
-	weighted, err := s.overview.WeightedRiskScore(ctx, city, from, to, scoring.CSIRiskThreshold)
+	weighted, err := s.overview.WeightedRiskScore(ctx, city, from, to, params.RiskThreshold)
 	if err != nil {
 		return out, apperr.Internal("could not measure claim risk load").Wrap(err)
 	}
@@ -254,14 +250,14 @@ func (s *OverviewService) computeCSI(ctx context.Context, city string, from, to 
 	out.bcs = scoring.BCS(volumes.Positive, volumes.Negative, volumes.Total)
 	out.bcsNormalized = scoring.BCSNormalized(out.bcs)
 	out.riskLoad = scoring.RiskLoad(weighted, volumes.Total)
-	out.csi = scoring.CSI(out.bcsNormalized, out.riskLoad)
+	out.csi = params.Index(out.bcsNormalized, out.riskLoad)
 	return out, nil
 }
 
 // hotPolicies ranks policies by the O2 metric and resolves their display names
 // (US70).
 func (s *OverviewService) hotPolicies(
-	ctx context.Context, city string, threshold float64, limit int,
+	ctx context.Context, city string, threshold float64, limit int, ranking OverviewRanking,
 ) ([]dto.HotPolicy, error) {
 	aggregates, err := s.overview.PolicyAggregates(ctx, city, threshold)
 	if err != nil {
@@ -274,7 +270,7 @@ func (s *OverviewService) hotPolicies(
 		counts = append(counts, a.AboveCount)
 		scores = append(scores, a.AvgScore)
 	}
-	sizes := combinedMetric(counts, scores)
+	sizes := combinedMetric(counts, scores, ranking)
 
 	rows := make([]dto.HotPolicy, 0, len(aggregates))
 	ids := make([]uuid.UUID, 0, len(aggregates))
@@ -353,14 +349,14 @@ func (s *OverviewService) policyNames(ctx context.Context, ids []uuid.UUID) (map
 
 // buildTopicBoxes turns per-topic aggregates into sized treemap rectangles,
 // largest first (US69).
-func buildTopicBoxes(aggregates []repository.TopicAggregate) []dto.TopicBox {
+func buildTopicBoxes(aggregates []repository.TopicAggregate, ranking OverviewRanking) []dto.TopicBox {
 	counts := make([]int64, 0, len(aggregates))
 	scores := make([]*float64, 0, len(aggregates))
 	for _, a := range aggregates {
 		counts = append(counts, a.AboveCount)
 		scores = append(scores, a.AvgScore)
 	}
-	sizes := combinedMetric(counts, scores)
+	sizes := combinedMetric(counts, scores, ranking)
 
 	boxes := make([]dto.TopicBox, 0, len(aggregates))
 	for i, a := range aggregates {
@@ -376,9 +372,11 @@ func buildTopicBoxes(aggregates []repository.TopicAggregate) []dto.TopicBox {
 	return boxes
 }
 
-// combinedMetric implements the O2 box-size formula US69 proposes as its
-// default: normalise each input against the largest value in the current set,
-// then weight the two equally (US69, mirroring the CSI 50/50 in PRD 6.6).
+// combinedMetric implements the O2 box-size and O3 ranking formula: normalise
+// each input against the largest value in the current set, then weight the two
+// by their configured shares. US69 proposes an equal split, mirroring the CSI
+// 50/50 in PRD 6.6, and explicitly leaves the weighting open — these two
+// settings are that open question made adjustable.
 //
 // Normalising against the set maximum rather than a fixed ceiling is what makes
 // the treemap readable: the count of above-threshold claims has no natural
@@ -387,7 +385,7 @@ func buildTopicBoxes(aggregates []repository.TopicAggregate) []dto.TopicBox {
 //
 // A set where every count is zero contributes zero from that half rather than
 // dividing by zero, leaving the average score to order the topics alone.
-func combinedMetric(counts []int64, scores []*float64) []float64 {
+func combinedMetric(counts []int64, scores []*float64, ranking OverviewRanking) []float64 {
 	var maxCount int64
 	var maxScore float64
 	for i := range counts {
@@ -408,7 +406,7 @@ func combinedMetric(counts []int64, scores []*float64) []float64 {
 		if maxScore > 0 && scores[i] != nil {
 			normalizedScore = *scores[i] / maxScore * scoring.MaxScore
 		}
-		out[i] = 0.5*normalizedCount + 0.5*normalizedScore
+		out[i] = ranking.WeightAboveCount*normalizedCount + ranking.WeightAvgScore*normalizedScore
 	}
 	return out
 }
