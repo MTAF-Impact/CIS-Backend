@@ -33,13 +33,18 @@ section outright.
 | `status` | `all` | US1 status tab. |
 | `topic_ids` | — | Comma-separated UUIDs, multi-select (US6/US15). |
 | `q` | — | Search claim text within each section (US11, US19). `%`/`_` are escaped, same as `GET /claims`. |
+| `existing_page`, `existing_limit` | `1`, `20` | Pagination for the S1 (Existing) section. Max `limit` 200. |
+| `non_existing_page`, `non_existing_limit` | `1`, `20` | Pagination for the S2 (Non-Existing) section. Max `limit` 200. |
 
-Each section returns at most **10** claims: S1 ranked by `final_claim_score`
+Each section paginates **independently** — S1 ranked by `final_claim_score`
 descending (US7), S2 by newest first (US16). `total_in_pool` is the full
-filtered count behind the "See all" button.
+filtered count for that section; `page`/`limit`/`total_pages` describe the
+window actually returned in `claims`. See
+[`../local_docs/PAGINATION_FOR_FE.md`](../local_docs/PAGINATION_FOR_FE.md) for
+the frontend-facing rationale.
 
 ```bash
-curl "http://localhost:8080/api/v1/claims/repository?status=all" \
+curl "http://localhost:8080/api/v1/claims/repository?status=all&existing_page=1&existing_limit=10&non_existing_page=1&non_existing_limit=10" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -59,6 +64,9 @@ curl "http://localhost:8080/api/v1/claims/repository?status=all" \
       "claim_type": "existing",
       "sorted_by": "final_claim_score DESC",
       "total_in_pool": 2,
+      "page": 1,
+      "limit": 10,
+      "total_pages": 1,
       "claims": [
         {
           "id": "c0000000-0000-0000-0000-000000000002",
@@ -82,6 +90,9 @@ curl "http://localhost:8080/api/v1/claims/repository?status=all" \
       "claim_type": "non_existing",
       "sorted_by": "created_at DESC",
       "total_in_pool": 1,
+      "page": 1,
+      "limit": 10,
+      "total_pages": 1,
       "claims": [
         {
           "id": "c0000000-0000-0000-0000-000000000003",

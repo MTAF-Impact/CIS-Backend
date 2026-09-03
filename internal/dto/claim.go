@@ -282,12 +282,20 @@ type Statement struct {
 }
 
 // ClaimSection is one of the two F1 sections, S1 or S2.
+//
+// Each section paginates independently: the caller picks its own page/limit
+// per section (S1 and S2 typically have very different pool sizes), so each
+// section carries its own pagination window rather than sharing one at the
+// RepositoryResponse level.
 type ClaimSection struct {
 	Section     string      `json:"section"` // S1 | S2
 	Label       string      `json:"label"`
 	ClaimType   string      `json:"claim_type"`
 	SortedBy    string      `json:"sorted_by"`
 	TotalInPool int64       `json:"total_in_pool"`
+	Page        int         `json:"page"`
+	Limit       int         `json:"limit"`
+	TotalPages  int         `json:"total_pages"`
 	Claims      []ClaimCard `json:"claims"`
 }
 

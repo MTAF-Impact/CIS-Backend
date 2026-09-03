@@ -28,6 +28,10 @@ func NewClaimHandler(claims *service.ClaimService) *ClaimHandler {
 
 // Repository handles GET /api/v1/claims/repository, returning the whole F1 page
 // in one call.
+//
+// Each section (S1 Existing, S2 Non-Existing) paginates independently:
+// `existing_page`/`existing_limit` and `non_existing_page`/`non_existing_limit`
+// let the frontend page and size each section on its own.
 func (h *ClaimHandler) Repository(c *fiber.Ctx) error {
 	status, err := parseStatusFilter(c.Query("status"))
 	if err != nil {
@@ -38,7 +42,10 @@ func (h *ClaimHandler) Repository(c *fiber.Ctx) error {
 		return apperr.BadRequest("topic_ids must be a comma-separated list of UUIDs")
 	}
 
-	res, err := h.claims.Repository(c.UserContext(), status, topicIDs, c.Query("q"))
+	existingPage := dto.NormalizePage(c.QueryInt("existing_page", dto.DefaultPage), c.QueryInt("existing_limit", dto.DefaultLimit))
+	nonExistingPage := dto.NormalizePage(c.QueryInt("non_existing_page", dto.DefaultPage), c.QueryInt("non_existing_limit", dto.DefaultLimit))
+
+	res, err := h.claims.Repository(c.UserContext(), status, topicIDs, c.Query("q"), existingPage, nonExistingPage)
 	if err != nil {
 		return err
 	}

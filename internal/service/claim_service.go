@@ -19,10 +19,6 @@ import (
 // TopAccountLimit is the size of the US12 Top 5 Accounts panel.
 const TopAccountLimit = 5
 
-// SectionSize is the number of claims each F1 section shows before "See all"
-// (US7, US16).
-const SectionSize = 10
-
 // ClaimService assembles the F1 Claim Repository Bank payloads.
 //
 // It holds an AI client for exactly one reason: harm confirmation (Flow 4)
@@ -77,12 +73,19 @@ type ListClaimsQuery struct {
 //
 // Both sections are always returned. Per US1 the status tab filters claims
 // within each section and never hides a section outright.
-func (s *ClaimService) Repository(ctx context.Context, status string, topicIDs []uuid.UUID, search string) (*dto.RepositoryResponse, error) {
-	existing, err := s.buildSection(ctx, models.ClaimTypeExisting, status, topicIDs, search)
+//
+// Each section paginates independently — the caller supplies its own
+// page/limit per section, since S1 and S2 pool sizes are unrelated and the
+// frontend may want a different page size for each.
+func (s *ClaimService) Repository(
+	ctx context.Context, status string, topicIDs []uuid.UUID, search string,
+	existingPage dto.PageParams, nonExistingPage dto.PageParams,
+) (*dto.RepositoryResponse, error) {
+	existing, err := s.buildSection(ctx, models.ClaimTypeExisting, status, topicIDs, search, existingPage)
 	if err != nil {
 		return nil, err
 	}
-	nonExisting, err := s.buildSection(ctx, models.ClaimTypeNonExisting, status, topicIDs, search)
+	nonExisting, err := s.buildSection(ctx, models.ClaimTypeNonExisting, status, topicIDs, search, nonExistingPage)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +112,9 @@ func (s *ClaimService) Repository(ctx context.Context, status string, topicIDs [
 	}, nil
 }
 
-func (s *ClaimService) buildSection(ctx context.Context, claimType, status string, topicIDs []uuid.UUID, search string) (*dto.ClaimSection, error) {
+func (s *ClaimService) buildSection(
+	ctx context.Context, claimType, status string, topicIDs []uuid.UUID, search string, page dto.PageParams,
+) (*dto.ClaimSection, error) {
 	// S1 ranks by FinalClaimScore (US7); S2 by newest predicted claim (US16).
 	sortBy := repository.SortByScore
 	section, label, sortedBy := "S1", "Existing Claim (Generic Claim)", "final_claim_score DESC"
@@ -124,7 +129,8 @@ func (s *ClaimService) buildSection(ctx context.Context, claimType, status strin
 		TopicIDs:     topicIDs,
 		Search:       search,
 		SortBy:       sortBy,
-		Limit:        SectionSize,
+		Limit:        page.Limit,
+		Offset:       page.Offset(),
 	}
 
 	rows, err := s.claims.ListClaims(ctx, filter)
@@ -141,12 +147,20 @@ func (s *ClaimService) buildSection(ctx context.Context, claimType, status strin
 		return nil, err
 	}
 
+	totalPages := 0
+	if page.Limit > 0 {
+		totalPages = int((total + int64(page.Limit) - 1) / int64(page.Limit))
+	}
+
 	return &dto.ClaimSection{
 		Section:     section,
 		Label:       label,
 		ClaimType:   claimType,
 		SortedBy:    sortedBy,
 		TotalInPool: total,
+		Page:        page.Page,
+		Limit:       page.Limit,
+		TotalPages:  totalPages,
 		Claims:      cards,
 	}, nil
 }
