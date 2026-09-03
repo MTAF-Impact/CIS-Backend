@@ -549,16 +549,17 @@ func (r *NetworkRepository) ListNetworkAccounts(
 		return nil, 0, classify(err)
 	}
 
-	var rows []NetworkAccountRow
-	err := q.Session(&gorm.Session{}).
+	q = q.Session(&gorm.Session{}).
 		Select("na.*, a.handle, a.platform, a.platform_account_id, a.created_at_platform, " +
 			"EXISTS (SELECT 1 FROM cis_coordination_allowlist w WHERE w.removed_at IS NULL " +
 			"AND w.platform = a.platform AND w.platform_account_id = a.platform_account_id) AS allowlisted").
-		Order(accountOrderClause(sortBy)).
-		Limit(limit).
-		Offset(offset).
-		Scan(&rows).Error
-	if err != nil {
+		Order(accountOrderClause(sortBy))
+	if limit > 0 {
+		q = q.Limit(limit).Offset(offset)
+	}
+
+	var rows []NetworkAccountRow
+	if err := q.Scan(&rows).Error; err != nil {
 		return nil, 0, classify(err)
 	}
 	return rows, total, nil
