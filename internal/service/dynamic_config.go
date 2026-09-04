@@ -18,11 +18,11 @@ import (
 	"github.com/cis/cis-backend/internal/scoring"
 )
 
-// F4's dynamic-parameter surface: reading and writing the runtime configuration
+// The dynamic-parameter surface: reading and writing the runtime configuration
 // held in cis_settings (models.ConfigParams).
 //
 // These are SettingService methods for the same reason the detector settings
-// are: they are one feature — F4's global configuration — and splitting them
+// are: they are one feature — the global configuration — and splitting them
 // would give one screen two services to talk to.
 
 // defaultConfigCacheTTL bounds how stale a read may be when SETTINGS_CACHE_TTL
@@ -161,7 +161,7 @@ func parseConfigFloat(values map[string]string, key string) float64 {
 	return param.DefaultFloat()
 }
 
-// CompositeWeights returns the live PRD 6.3 weights (AP-01..AP-05).
+// CompositeWeights returns the live composite scoring weights.
 func (s *SettingService) CompositeWeights(ctx context.Context) scoring.Weights {
 	values := s.presented(ctx)
 	return scoring.Weights{
@@ -173,7 +173,7 @@ func (s *SettingService) CompositeWeights(ctx context.Context) scoring.Weights {
 	}
 }
 
-// HarmWeights returns the live PRD 6.2.4 sub-weights (AP-06..AP-09).
+// HarmWeights returns the live harm sub-weights.
 func (s *SettingService) HarmWeights(ctx context.Context) scoring.HarmWeights {
 	values := s.presented(ctx)
 	return scoring.HarmWeights{
@@ -184,18 +184,17 @@ func (s *SettingService) HarmWeights(ctx context.Context) scoring.HarmWeights {
 	}
 }
 
-// DiscountGamma returns the pushback dampening cap (AP-15).
+// DiscountGamma returns the pushback dampening cap.
 func (s *SettingService) DiscountGamma(ctx context.Context) float64 {
 	return s.configFloat(ctx, models.SettingDiscountGamma)
 }
 
-// CSIParams returns the configured shape of the Climate Sentiment Index
-// (AP-18..AP-20).
+// CSIParams returns the configured shape of the Climate Sentiment Index.
 //
 // RiskThreshold is read from the alert threshold rather than from a row of its
-// own: AP-20 is a derived value that always mirrors AP-16, so that "elevated
-// risk" cannot come to mean one thing on the Alert page and another on the
-// Overview gauge.
+// own: it is a derived value that always mirrors the alert threshold, so that
+// "elevated risk" cannot come to mean one thing on the Alert page and another
+// on the Overview gauge.
 func (s *SettingService) CSIParams(ctx context.Context) (scoring.CSIParams, error) {
 	threshold, err := s.AlertThreshold(ctx)
 	if err != nil {
@@ -215,8 +214,7 @@ func (s *SettingService) CSIParams(ctx context.Context) (scoring.CSIParams, erro
 	}, nil
 }
 
-// OverviewRanking is the configured O2/O3 box-size and leaderboard formula
-// (PRD US69, US70).
+// OverviewRanking is the configured treemap box-size and leaderboard formula.
 type OverviewRanking struct {
 	WeightAboveCount float64
 	WeightAvgScore   float64
@@ -235,13 +233,13 @@ func (s *SettingService) OverviewRanking(ctx context.Context) OverviewRanking {
 	}
 }
 
-// ScoreSnapshotRetention is how long per-claim score history is kept before the
-// hourly job prunes it (US27).
+// ScoreSnapshotRetention is how long per-claim score history is kept before
+// the hourly job prunes it.
 func (s *SettingService) ScoreSnapshotRetention(ctx context.Context) time.Duration {
 	return time.Duration(s.configInt(ctx, models.SettingScoreSnapshotRetentionDays)) * 24 * time.Hour
 }
 
-// ConfigCatalog is the whole F4 dynamic-parameter surface in one payload: the
+// ConfigCatalog is the whole dynamic-parameter surface in one payload: the
 // registry's metadata, the current values, and the sections to render them in.
 //
 // Served rather than duplicated in the frontend for the same reason the
@@ -301,7 +299,7 @@ func (s *SettingService) configParamView(
 
 	if p.Derived {
 		// The only derived parameter is the CSI risk threshold, which mirrors
-		// the alert threshold (AP-20).
+		// the alert threshold.
 		view.Value = formatFloat(alertThreshold)
 		return view
 	}
@@ -310,7 +308,8 @@ func (s *SettingService) configParamView(
 	}
 	// IsSet asks "has anyone moved this off its documented default", not "does a
 	// row exist" — the seed writes a row for every parameter, so row existence
-	// answers nothing. This is what F4 gates its reset control on.
+	// answers nothing. This is what the Admin Settings page gates its reset
+	// control on.
 	view.IsSet = view.Value != p.Default
 	return view
 }
@@ -330,7 +329,7 @@ func (s *SettingService) configParamView(
 //
 // # Why every change is written in one transaction with its history
 //
-// US62's rule for the detector applies here for the same reason: a governed
+// The same rule applies here as for the detector settings: a governed
 // parameter persisted without its history entry is a parameter changed by
 // nobody. A save that changes nothing writes nothing, which is what keeps the
 // history readable.

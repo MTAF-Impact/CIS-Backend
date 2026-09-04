@@ -1,24 +1,25 @@
-// Package scheduler runs the background jobs the PRD requires.
+// Package scheduler runs the background jobs the system requires.
 //
 // Four jobs matter:
 //
-//   - Score snapshots: the F3 chart plots FinalClaimScore over time (US27), but
-//     the AI service only stores the current value, so this job copies it into
-//     the backend-owned snapshot table to build that history. It captures — it
-//     does not ask the AI service to rescore first; see runScoreSnapshot.
+//   - Score snapshots: the Alert page's chart plots FinalClaimScore over
+//     time, but the AI service only stores the current value, so this job
+//     copies it into the backend-owned snapshot table to build that history.
+//     It captures — it does not ask the AI service to rescore first; see
+//     runScoreSnapshot.
 //   - Matchmaking retry: a policy whose AI hand-off failed, or whose result
 //     callback was lost, is stranded on a "Processing" badge until something
 //     re-queues it. Nothing else does.
-//   - Detection tick (F5, PRD 10.5.8): the scheduled sweep over Active claims
-//     and the velocity-triggered runs. The tick is not the cadence — see
+//   - Detection tick: the scheduled sweep over Active claims and the
+//     velocity-triggered runs. The tick is not the cadence — see
 //     runDetection.
-//   - Snapshot retention (F5, PRD 10.9.1 rule 7): purges evidence snapshots
-//     past their horizon, except where a report was generated from them.
+//   - Snapshot retention: purges evidence snapshots past their horizon,
+//     except where a report was generated from them.
 //
 // The backend owns cron for all four. The AI service has no scheduler at all —
-// its background work is exclusively request-scoped. F5's runs are dispatched
-// from here because the scope rules (Active Existing claims only) and the
-// window arithmetic live on this side.
+// its background work is exclusively request-scoped. The Coordinated-Network
+// Detector's runs are dispatched from here because the scope rules (Active
+// Existing claims only) and the window arithmetic live on this side.
 //
 // # What used to be here
 //
@@ -148,9 +149,10 @@ func (s *Scheduler) runMatchmakingRetry() {
 // So this job's remaining question is not "are the scores current" but "has the
 // current value been recorded", and firing an hourly full-repository rescore to
 // answer it spent an LLM-backed pass on claims whose inputs had not moved.
-// Capturing is cheap, is the only thing US27's chart actually needs, and leaves
-// rescoring where it belongs: with the events that change a score. A rescore is
-// still available on demand (POST /api/v1/admin/rescore).
+// Capturing is cheap, is the only thing the Alert page's chart actually
+// needs, and leaves rescoring where it belongs: with the events that change
+// a score. A rescore is still available on demand
+// (POST /api/v1/admin/rescore).
 func (s *Scheduler) runScoreSnapshot() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -164,7 +166,7 @@ func (s *Scheduler) runScoreSnapshot() {
 		log.Printf("[cron] captured %d claim score snapshots", count)
 	}
 
-	// US71: a crossing is a change between two evaluations, so it can only be
+	// A crossing is a change between two evaluations, so it can only be
 	// detected where the scores have just been read. Running it here — right
 	// after the capture, not on a clock of its own — is what makes "on each
 	// score refresh" true rather than approximately true.
@@ -182,19 +184,18 @@ func (s *Scheduler) runScoreSnapshot() {
 	}
 }
 
-// runDetection fires the F5 scheduled sweep and the velocity trigger
-// (PRD 10.5.8 items 1 and 2).
+// runDetection fires the scheduled sweep and the velocity trigger.
 //
 // The tick is deliberately more frequent than the detection cadence. The
-// cadence is a detector setting an admin edits in F4 (1-24 h) and a cron spec
-// is fixed at boot, so the two cannot be the same thing: this job asks "is a
-// run due?" every tick and DetectionService.RunScheduled answers from the
-// current setting. An admin who tightens the cadence gets the new one on the
-// next tick rather than on the next deploy.
+// cadence is a detector setting an admin edits in Admin Settings (1-24 h)
+// and a cron spec is fixed at boot, so the two cannot be the same thing:
+// this job asks "is a run due?" every tick and DetectionService.RunScheduled
+// answers from the current setting. An admin who tightens the cadence gets
+// the new one on the next tick rather than on the next deploy.
 //
 // The timeout is generous because a run over 200 claims is a large hand-off,
-// but it only covers the dispatch — PRD 10.5.8's 10-minute budget is the AI
-// service's own, and the pipeline runs asynchronously on its side.
+// but it only covers the dispatch — the 10-minute processing budget is the
+// AI service's own, and the pipeline runs asynchronously on its side.
 //
 // A failing scheduled sweep does not stop the velocity trigger: they answer
 // different questions, and the spike is the one that cannot wait.
@@ -215,8 +216,7 @@ func (s *Scheduler) runDetection() {
 	}
 }
 
-// runSnapshotRetention purges evidence snapshots past their retention horizon
-// (PRD 10.9.1 rule 7).
+// runSnapshotRetention purges evidence snapshots past their retention horizon.
 //
 // Not a blanket TTL delete: a snapshot a report was generated from lives as long
 // as the report, because a report whose evidence has been purged is worthless as

@@ -14,8 +14,8 @@ import (
 )
 
 // AllowlistRepository manages the two exclusion lists the detector reads before
-// it does anything else: the declared-coordination account allowlist (US56,
-// US63) and the common-phrase allowlist (PRD 10.5.2.2).
+// it does anything else: the declared-coordination account allowlist and the
+// common-phrase allowlist.
 //
 // Both are backend-owned and pipeline-read — the one place the read direction
 // between the two services reverses. Everything else the AI service writes and
@@ -29,7 +29,7 @@ func NewAllowlistRepository(db *gorm.DB) *AllowlistRepository {
 	return &AllowlistRepository{db: db}
 }
 
-// AllowlistFilter narrows the US63 management screen.
+// AllowlistFilter narrows the allowlist management screen.
 type AllowlistFilter struct {
 	Search   string
 	Platform string
@@ -43,7 +43,7 @@ type AllowlistFilter struct {
 	Offset         int
 }
 
-// List returns a page of allowlist entries (US63).
+// List returns a page of allowlist entries.
 func (r *AllowlistRepository) List(ctx context.Context, f AllowlistFilter) ([]models.CISCoordinationAllowlist, int64, error) {
 	q := r.db.WithContext(ctx).Model(&models.CISCoordinationAllowlist{})
 
@@ -105,12 +105,13 @@ type AllowlistEntryInput struct {
 //
 // # Why upsert rather than insert
 //
-// US56 adds accounts from two directions — one at a time from the account
-// drawer, and a whole network at once from the detail page — and US63 adds them
-// manually. The same NGO reached from two networks must not produce a duplicate
-// row, and re-adding an account whose protection was previously removed has to
-// REVIVE it rather than fail on the unique index. Reviving clears the removal
-// fields so the entry does not read as simultaneously active and removed.
+// Accounts are added from three directions — one at a time from the account
+// drawer, a whole network at once from the detail page, and manually from the
+// admin screen. The same NGO reached from two networks must not produce a
+// duplicate row, and re-adding an account whose protection was previously
+// removed has to REVIVE it rather than fail on the unique index. Reviving
+// clears the removal fields so the entry does not read as simultaneously
+// active and removed.
 //
 // The addition reason is overwritten on revival because it is the current
 // justification; the previous removal reason is the thing being superseded.
@@ -156,7 +157,7 @@ func (r *AllowlistRepository) Add(ctx context.Context, entries []AllowlistEntryI
 	return int(res.RowsAffected), nil
 }
 
-// Remove soft-deletes an entry with a mandatory reason (US63).
+// Remove soft-deletes an entry with a mandatory reason.
 //
 // A hard delete would erase who protected an organisation and why, which is
 // exactly the record "removal requires a reason and is logged" exists to keep.
@@ -180,7 +181,7 @@ func (r *AllowlistRepository) Remove(ctx context.Context, id uuid.UUID, reason s
 	return nil
 }
 
-// Update edits an active entry's category or reason (US63).
+// Update edits an active entry's category or reason.
 func (r *AllowlistRepository) Update(ctx context.Context, id uuid.UUID, category, reason string, updatedBy *uuid.UUID) error {
 	updates := map[string]any{"updated_at": time.Now().UTC()}
 	if category != "" {
@@ -208,8 +209,8 @@ func (r *AllowlistRepository) Update(ctx context.Context, id uuid.UUID, category
 
 // ActiveKeys returns every currently protected account identity.
 //
-// This is the list the pipeline consumes before candidate selection
-// (PRD 10.5.1), so it is exposed whole rather than paged.
+// This is the list the pipeline consumes before candidate selection, so it is
+// exposed whole rather than paged.
 func (r *AllowlistRepository) ActiveKeys(ctx context.Context) ([]PlatformAccountKey, error) {
 	var rows []PlatformAccountKey
 	err := r.db.WithContext(ctx).
@@ -221,8 +222,9 @@ func (r *AllowlistRepository) ActiveKeys(ctx context.Context) ([]PlatformAccount
 	return rows, err
 }
 
-// CountByCategory returns active entries per category, for the US63 screen's
-// summary and for the onboarding check that the list was seeded at all.
+// CountByCategory returns active entries per category, for the management
+// screen's summary and for the onboarding check that the list was seeded at
+// all.
 func (r *AllowlistRepository) CountByCategory(ctx context.Context) (map[string]int64, error) {
 	type row struct {
 		Category string `gorm:"column:category"`
@@ -249,7 +251,7 @@ func (r *AllowlistRepository) CountByCategory(ctx context.Context) (map[string]i
 	return out, nil
 }
 
-// --- Common-phrase allowlist (PRD 10.5.2.2) ---
+// --- Common-phrase allowlist ---
 
 // ListPhrases returns a page of common phrases.
 func (r *AllowlistRepository) ListPhrases(ctx context.Context, search string, limit, offset int) ([]models.CISCommonPhrase, int64, error) {

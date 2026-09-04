@@ -18,8 +18,8 @@ func TestBCSAndNormalization(t *testing.T) {
 		{"entirely negative", 0, 100, 100, -1, 0},
 		{"balanced", 50, 50, 100, 0, 50},
 		{"neutral majority", 10, 5, 100, 0.05, 52.5},
-		// PRD 6.6.1 gives no value for an empty window; callers gate on
-		// MinimumVolume long before this, so it must simply not divide by zero.
+		// An empty window has no defined value; callers gate on MinimumVolume
+		// long before this, so it must simply not divide by zero.
 		{"no conversation", 0, 0, 0, 0, 50},
 	}
 
@@ -37,11 +37,10 @@ func TestBCSAndNormalization(t *testing.T) {
 }
 
 func TestRiskLoadIsBounded(t *testing.T) {
-	// PRD 6.6.2's ratio is not mathematically capped at 100: Volume_i is a
-	// subset of the denominator, but a claim scoring 100 across most of the
-	// conversation drives the quotient above it. 6.3's "still assert the bound"
-	// applies with more force here than to the parameters where it is
-	// guaranteed.
+	// The ratio is not mathematically capped at 100: Volume_i is a subset of
+	// the denominator, but a claim scoring 100 across most of the conversation
+	// drives the quotient above it, so the bound has to be asserted explicitly
+	// rather than relying on it falling out of the formula.
 	if got := RiskLoad(1_000_000, 100); got != MaxScore {
 		t.Errorf("RiskLoad over-range = %v, want %v", got, MaxScore)
 	}
@@ -53,8 +52,8 @@ func TestRiskLoadIsBounded(t *testing.T) {
 	}
 }
 
-// defaultParams mirrors the seeded configuration, so these tests assert the
-// PRD's own numbers rather than whatever the registry happens to hold.
+// defaultParams mirrors the seeded configuration, so these tests assert fixed,
+// known-good numbers rather than whatever the registry happens to hold.
 var defaultParams = CSIParams{
 	WeightBCS:        0.5,
 	WeightRiskLoad:   0.5,
@@ -68,7 +67,7 @@ var defaultParams = CSIParams{
 
 func TestCSIInvertsRiskLoad(t *testing.T) {
 	// Higher must read as healthier: a calm-sounding conversation carrying a
-	// heavy risk load must not score as healthy on tone alone (PRD 6.6.3).
+	// heavy risk load must not score as healthy on tone alone.
 	calmButRisky := defaultParams.Index(90, 80)
 	calmAndClean := defaultParams.Index(90, 0)
 	if calmButRisky >= calmAndClean {

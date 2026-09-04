@@ -14,12 +14,12 @@ import (
 	"github.com/cis/cis-backend/internal/scoring"
 )
 
-// OverviewService serves F6, the Overview page (PRD v1.5, Section 11).
+// OverviewService serves the Overview page.
 //
-// It computes rather than reads: F6's numbers are aggregates over the same
-// claim rows F1 ranks and the same content stream the AI service scores. None
-// of them is stored, because a stored copy is a number that can disagree with
-// the page it summarises.
+// It computes rather than reads: the Overview page's numbers are aggregates
+// over the same claim rows the claim list ranks and the same content stream
+// the AI service scores. None of them is stored, because a stored copy is a
+// number that can disagree with the page it summarises.
 type OverviewService struct {
 	overview *repository.OverviewRepository
 	policies *repository.PolicyRepository
@@ -35,7 +35,8 @@ func NewOverviewService(
 	return &OverviewService{overview: overview, policies: policies, settings: settings}
 }
 
-// Page builds the whole F6 payload: O1, O2 and O3 (US66-US70).
+// Page builds the whole Overview payload: the sentiment gauge, the topic
+// treemap, and the policy leaderboard.
 func (s *OverviewService) Page(ctx context.Context, policyLimit int) (*dto.OverviewResponse, error) {
 	threshold, err := s.settings.AlertThreshold(ctx)
 	if err != nil {
@@ -89,7 +90,7 @@ func (s *OverviewService) Page(ctx context.Context, policyLimit int) (*dto.Overv
 	return res, nil
 }
 
-// Topic builds the O2 click-through modal for one topic (US69).
+// Topic builds the treemap's click-through modal for one topic.
 func (s *OverviewService) Topic(ctx context.Context, topicID uuid.UUID) (*dto.TopicOverviewDetail, error) {
 	threshold, err := s.settings.AlertThreshold(ctx)
 	if err != nil {
@@ -146,8 +147,8 @@ func (s *OverviewService) Topic(ctx context.Context, topicID uuid.UUID) (*dto.To
 	return out, nil
 }
 
-// sentimentIndex computes O1's Climate Sentiment Index over the 7-day rolling
-// window, with the 24h-lagged momentum indicator (PRD 6.6).
+// sentimentIndex computes the gauge's Climate Sentiment Index over the 7-day
+// rolling window, with the 24h-lagged momentum indicator.
 func (s *OverviewService) sentimentIndex(ctx context.Context, city string, now time.Time) (*dto.SentimentIndex, error) {
 	params, err := s.settings.CSIParams(ctx)
 	if err != nil {
@@ -186,8 +187,8 @@ func (s *OverviewService) sentimentIndex(ctx context.Context, city string, now t
 		Neutral:  current.volumes.Neutral,
 	}
 
-	// PRD 6.6.3: below the minimum activity threshold the index would report a
-	// falsely calm environment from low engagement, so it reports nothing.
+	// Below the minimum activity threshold the index would report a falsely
+	// calm environment from low engagement, so it reports nothing.
 	if current.volumes.Total < params.MinimumVolume {
 		out.Status = dto.CSIStatusInsufficientData
 		out.Reason = "Not enough climate conversation in the window to compute a reliable index."
@@ -202,9 +203,9 @@ func (s *OverviewService) sentimentIndex(ctx context.Context, city string, now t
 	out.BCSNormalized = &current.bcsNormalized
 	out.RiskLoad = &current.riskLoad
 
-	// Momentum: the same index over a window lagged by 24h (PRD 6.6.3). A
-	// lagged window that is itself too thin yields no direction rather than a
-	// direction computed from noise.
+	// Momentum: the same index over a window lagged by 24h. A lagged window
+	// that is itself too thin yields no direction rather than a direction
+	// computed from noise.
 	lag := time.Duration(params.MomentumLagHours) * time.Hour
 	previous, err := s.computeCSI(ctx, city, from.Add(-lag), now.Add(-lag), params)
 	if err != nil {
@@ -254,8 +255,8 @@ func (s *OverviewService) computeCSI(
 	return out, nil
 }
 
-// hotPolicies ranks policies by the O2 metric and resolves their display names
-// (US70).
+// hotPolicies ranks policies by the combined metric and resolves their
+// display names.
 func (s *OverviewService) hotPolicies(
 	ctx context.Context, city string, threshold float64, limit int, ranking OverviewRanking,
 ) ([]dto.HotPolicy, error) {
@@ -305,9 +306,9 @@ func (s *OverviewService) hotPolicies(
 }
 
 // policyNames resolves AI policy ids onto display references, preferring this
-// backend's F2 record where one shadows the AI policy — the same precedence the
-// claim detail page uses, so a policy is never named two different things in
-// two places.
+// backend's own policy record where one shadows the AI policy — the same
+// precedence the claim detail page uses, so a policy is never named two
+// different things in two places.
 func (s *OverviewService) policyNames(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]dto.PolicyRef, error) {
 	out := make(map[uuid.UUID]dto.PolicyRef, len(ids))
 	if len(ids) == 0 {
@@ -348,7 +349,7 @@ func (s *OverviewService) policyNames(ctx context.Context, ids []uuid.UUID) (map
 }
 
 // buildTopicBoxes turns per-topic aggregates into sized treemap rectangles,
-// largest first (US69).
+// largest first.
 func buildTopicBoxes(aggregates []repository.TopicAggregate, ranking OverviewRanking) []dto.TopicBox {
 	counts := make([]int64, 0, len(aggregates))
 	scores := make([]*float64, 0, len(aggregates))
@@ -372,11 +373,11 @@ func buildTopicBoxes(aggregates []repository.TopicAggregate, ranking OverviewRan
 	return boxes
 }
 
-// combinedMetric implements the O2 box-size and O3 ranking formula: normalise
-// each input against the largest value in the current set, then weight the two
-// by their configured shares. US69 proposes an equal split, mirroring the CSI
-// 50/50 in PRD 6.6, and explicitly leaves the weighting open — these two
-// settings are that open question made adjustable.
+// combinedMetric implements the shared treemap box-size and policy ranking
+// formula: normalise each input against the largest value in the current set,
+// then weight the two by their configured shares. The default is an equal
+// split, mirroring the CSI's own 50/50 weighting, and deliberately leaves the
+// weighting open — these two settings are that open question made adjustable.
 //
 // Normalising against the set maximum rather than a fixed ceiling is what makes
 // the treemap readable: the count of above-threshold claims has no natural

@@ -13,13 +13,14 @@ import (
 	"github.com/cis/cis-backend/internal/models"
 )
 
-// ErrPipelineUnavailable reports that the F5 detection tables do not exist yet.
+// ErrPipelineUnavailable reports that the coordinated-network detection tables
+// do not exist yet.
 //
 // They are provisioned by the AI service, not by this backend's AutoMigrate, so
-// on a database where the detector has never been deployed every F5 query fails
-// with a Postgres "relation ... does not exist" (SQLSTATE 42P01). Surfacing
-// that verbatim as a 500 would read as a backend bug; it is a deployment state.
-// Services translate this into a 503 that says so.
+// on a database where the detector has never been deployed every network query
+// fails with a Postgres "relation ... does not exist" (SQLSTATE 42P01).
+// Surfacing that verbatim as a 500 would read as a backend bug; it is a
+// deployment state. Services translate this into a 503 that says so.
 var ErrPipelineUnavailable = errors.New("coordinated-network detection tables are not provisioned")
 
 // undefinedTable is the Postgres SQLSTATE for "relation does not exist".
@@ -39,8 +40,8 @@ func classify(err error) error {
 	return err
 }
 
-// NetworkRepository reads the AI service's F5 detection tables, overlaying this
-// backend's own cis_network_reviews.
+// NetworkRepository reads the AI service's coordinated-network detection
+// tables, overlaying this backend's own cis_network_reviews.
 //
 // It exposes no write method for any AI-owned table. Every mutation here
 // targets a cis_* table, and the review overlay is the only reason this
@@ -60,9 +61,9 @@ type NetworkRow struct {
 	models.AICoordinatedNetwork `gorm:"embedded"`
 
 	// ReviewStatus is COALESCE(review.status, 'unreviewed'). Orthogonal to
-	// ConfidenceBand: the band is computed by PRD 10.6.2, the status is set by
-	// a human under US52, and PRD 10.10 forbids expressing any visibility rule
-	// as a disjunction across the two.
+	// ConfidenceBand: the band is computed by the detector, the status is set
+	// by a human, and no visibility rule should ever be expressed as a
+	// disjunction across the two.
 	ReviewStatus string     `gorm:"column:review_status"`
 	ReviewReason *string    `gorm:"column:review_reason"`
 	ReviewedBy   *uuid.UUID `gorm:"column:reviewed_by"`
@@ -79,8 +80,8 @@ type NetworkRow struct {
 	PassedRelevanceGate   *bool      `gorm:"column:passed_relevance_gate"`
 
 	// Run-level facts. Truncation and signal unavailability cap every network
-	// in a run at Medium (PRD 10.6.3 rule 4), and PRD 10.5.1 requires the
-	// truncation flag on the detail page rather than only in storage.
+	// in a run at Medium confidence, and the truncation flag must be shown on
+	// the detail page rather than left implicit in storage.
 	RunTruncated          bool              `gorm:"column:run_truncated"`
 	RunSignalsUnavailable models.StringList `gorm:"column:run_signals_unavailable"`
 	RunCandidatesCount    int               `gorm:"column:run_candidates_count"`
@@ -90,12 +91,12 @@ type NetworkRow struct {
 	RunTriggerSource      string            `gorm:"column:run_trigger_source"`
 
 	// RecurrenceCount is how many times this fingerprint has been seen,
-	// counting the current detection. Drives US46's "Seen 3x since 12 Jun".
+	// counting the current detection. Drives the list's "Seen 3x since 12 Jun".
 	RecurrenceCount int        `gorm:"column:recurrence_count"`
 	FirstSeenAt     *time.Time `gorm:"column:first_seen_at"`
 }
 
-// NetworkSort keys (US48).
+// NetworkSort keys.
 const (
 	NetworkSortScore       = "score"
 	NetworkSortDetected    = "detected_at"
@@ -104,16 +105,16 @@ const (
 	NetworkSortRecurrences = "recurrences"
 )
 
-// NetworkFilter describes the F5 list query (US43-US48).
+// NetworkFilter describes the network list query.
 type NetworkFilter struct {
 	// ReviewStatus filters on the overlaid status. Empty or "all" means all.
 	ReviewStatus string
 	// ConfidenceBands restricts to specific bands. Empty means the default
 	// surfaceable set — see IncludeLowConfidence.
 	ConfidenceBands []string
-	// IncludeLowConfidence is US43's "Show low-confidence networks" toggle,
-	// off by default. It only ever widens the F5 list; it has no effect on F1,
-	// which has no such toggle (PRD 10.6.3 rule 5).
+	// IncludeLowConfidence is the "Show low-confidence networks" toggle, off
+	// by default. It only ever widens the network list; it has no effect on
+	// the claim page's badge, which has no such toggle.
 	IncludeLowConfidence bool
 
 	ClaimIDs  []uuid.UUID
@@ -125,7 +126,7 @@ type NetworkFilter struct {
 	DetectedTo   *time.Time
 
 	// Search matches the linked claim statement, the network label, and member
-	// account handles, including partial handles (US47).
+	// account handles, including partial handles.
 	Search string
 
 	SortBy string
@@ -139,13 +140,13 @@ type NetworkFilter struct {
 //
 //  1. The review overlay is LEFT JOINed and resolved in SQL, so filtering by
 //     status pages correctly. Same pattern as claims.
-//  2. Suppressed networks are excluded unconditionally. PRD 10.6.3 rule 3
-//     suppresses an allowlisted network "entirely" — there is no surface and no
-//     toggle that reveals it, so the exclusion belongs in the base query rather
-//     than in each caller.
-//  3. Clusters below N_min are likewise never surfaced (rule 1). The pipeline
-//     already applies the retention filter, but a cluster whose membership was
-//     later reduced by allowlisting could fall below it, so it is re-asserted.
+//  2. Suppressed networks are excluded unconditionally. An allowlisted network
+//     is suppressed "entirely" — there is no surface and no toggle that reveals
+//     it, so the exclusion belongs in the base query rather than in each caller.
+//  3. Clusters below the minimum size are likewise never surfaced. The
+//     pipeline already applies this retention filter, but a cluster whose
+//     membership was later reduced by allowlisting could fall below it, so it
+//     is re-asserted.
 func (r *NetworkRepository) baseQuery(ctx context.Context, f NetworkFilter) *gorm.DB {
 	q := r.db.WithContext(ctx).
 		Table("coordinated_network AS n").
@@ -164,8 +165,8 @@ func (r *NetworkRepository) baseQuery(ctx context.Context, f NetworkFilter) *gor
 	case len(f.ConfidenceBands) > 0:
 		q = q.Where("n.confidence_band IN ?", f.ConfidenceBands)
 	case !f.IncludeLowConfidence:
-		// US43: the list shows Medium and High by default. Low is de-emphasised
-		// and hidden behind an explicit toggle (PRD 10.6.3 rule 2).
+		// The list shows Medium and High by default. Low is de-emphasised and
+		// hidden behind an explicit toggle.
 		q = q.Where("n.confidence_band IN ?", models.SurfaceableConfidenceBands)
 	}
 
@@ -183,7 +184,7 @@ func (r *NetworkRepository) baseQuery(ctx context.Context, f NetworkFilter) *gor
 		)
 	}
 	if len(f.PolicyIDs) > 0 {
-		// US45: filtering by policy resolves transitively —
+		// Filtering by policy resolves transitively —
 		// policy -> linked claims -> networks amplifying those claims. Both
 		// claim/policy relations are followed, the many-to-many join for
 		// Existing claims and the direct column for Synthetic ones, matching
@@ -207,7 +208,7 @@ func (r *NetworkRepository) baseQuery(ctx context.Context, f NetworkFilter) *gor
 
 	if s := strings.TrimSpace(f.Search); s != "" {
 		pattern := "%" + escapeLike(s) + "%"
-		// US47 searches three different things, one of which lives two joins
+		// This searches three different things, one of which lives two joins
 		// away. The handle arm is an EXISTS rather than a join so a network
 		// with 300 matching members still yields one row.
 		q = q.Where(
@@ -244,7 +245,7 @@ const networkSelectColumns = `n.*,
 	(SELECT COUNT(*) FROM coordinated_network sib WHERE sib.fingerprint_hash = n.fingerprint_hash) AS recurrence_count,
 	(SELECT MIN(sib.created_at) FROM coordinated_network sib WHERE sib.fingerprint_hash = n.fingerprint_hash) AS first_seen_at`
 
-// ListNetworks returns a page of networks matching the filter (US43-US48).
+// ListNetworks returns a page of networks matching the filter.
 func (r *NetworkRepository) ListNetworks(ctx context.Context, f NetworkFilter) ([]NetworkRow, error) {
 	var rows []NetworkRow
 
@@ -301,7 +302,7 @@ func (r *NetworkRepository) FindNetworkByID(ctx context.Context, id uuid.UUID) (
 	return &row, nil
 }
 
-// networkOrderClause maps US48's sort control onto a deterministic ORDER BY.
+// networkOrderClause maps the sort control onto a deterministic ORDER BY.
 //
 // Every branch ends with n.network_id so paging is stable when the leading key
 // ties, which it frequently does on account and post counts.
@@ -329,8 +330,7 @@ type ClaimLinkRow struct {
 	TopicName                 *string    `gorm:"column:topic_name"`
 }
 
-// ListClaimLinks returns every claim a network is linked to, primary first
-// (US49, US50's relevance block).
+// ListClaimLinks returns every claim a network is linked to, primary first.
 func (r *NetworkRepository) ListClaimLinks(ctx context.Context, networkID uuid.UUID) ([]ClaimLinkRow, error) {
 	var rows []ClaimLinkRow
 	err := r.db.WithContext(ctx).
@@ -346,9 +346,9 @@ func (r *NetworkRepository) ListClaimLinks(ctx context.Context, networkID uuid.U
 
 // AncestorLink is one prior detection in a network's recurrence chain.
 //
-// PRD 10.5.7 and 10.5.1 together: a recurrence inherits a network's history but
-// NOT its relevance, and both the detail page and the report must state the
-// current primary claim AND the prior anchoring claims. "This same set of
+// A recurrence inherits a network's history but NOT its relevance, and both
+// the detail page and the report must state the current primary claim AND
+// the prior anchoring claims. "This same set of
 // accounts previously amplified claims X and Y" is the sentence that makes a
 // platform referral actionable, so the chain has to be walked and each
 // ancestor's own primary claim resolved.
@@ -401,7 +401,7 @@ ORDER BY n.created_at ASC`
 	return rows, classify(err)
 }
 
-// FindRun loads one detection run (US62's run history, US49's header).
+// FindRun loads one detection run.
 func (r *NetworkRepository) FindRun(ctx context.Context, runID uuid.UUID) (*models.AIDetectionRun, error) {
 	var run models.AIDetectionRun
 	err := r.db.WithContext(ctx).Table("detection_run").Where("run_id = ?", runID).Limit(1).Scan(&run).Error
@@ -435,9 +435,8 @@ type RunRow struct {
 // ListRuns returns the run history.
 //
 // Truncation and signal unavailability are RUN-level facts that cap confidence
-// for every network in that run (PRD 10.6.3 rule 4), so "why is everything
-// Medium this week?" is a question about runs, not about networks, and needs a
-// surface of its own.
+// for every network in that run, so "why is everything Medium this week?" is
+// a question about runs, not about networks, and needs a surface of its own.
 func (r *NetworkRepository) ListRuns(ctx context.Context, f RunFilter) ([]RunRow, int64, error) {
 	q := r.db.WithContext(ctx).Table("detection_run AS run")
 
@@ -480,8 +479,8 @@ func (r *NetworkRepository) ListRuns(ctx context.Context, f RunFilter) ([]RunRow
 // LastRunStartedAt returns when the most recent run with the given trigger
 // source started, or nil when there has never been one.
 //
-// The scheduled sweep's cadence is a detector setting (1-24 h, PRD 10.5.8), not
-// a cron expression, so the job cannot express it as a schedule: cron is fixed
+// The scheduled sweep's cadence is a detector setting (1-24 h), not a cron
+// expression, so the job cannot express it as a schedule: cron is fixed
 // at boot and the setting changes at runtime. The tick therefore fires often
 // and asks this question first. A pending or running row counts — two sweeps
 // overlapping is worse than one sweep late.
@@ -499,7 +498,7 @@ func (r *NetworkRepository) LastRunStartedAt(ctx context.Context, triggerSource 
 }
 
 // NetworkAccountRow is one member (or comparison) account with its behavioural
-// metrics, for the US55 annex and the US51 graph.
+// metrics, for the account annex and the network graph.
 type NetworkAccountRow struct {
 	models.AINetworkAccount `gorm:"embedded"`
 	Handle                  string     `gorm:"column:handle"`
@@ -512,7 +511,7 @@ type NetworkAccountRow struct {
 	Allowlisted bool `gorm:"column:allowlisted"`
 }
 
-// AccountSort keys for the US55 annex.
+// AccountSort keys for the account annex.
 const (
 	AccountSortHandle       = "handle"
 	AccountSortPosts        = "posts_in_cluster"
@@ -523,12 +522,12 @@ const (
 	AccountSortInterpostGap = "median_interpost"
 )
 
-// ListNetworkAccounts returns a page of a network's accounts (US55).
+// ListNetworkAccounts returns a page of a network's accounts.
 //
 // role selects members, comparison accounts, or (empty) both. The comparison
-// set is what US51 renders "in a visually distinct style, for contrast" and
-// what PRD 10.8 item 5 counts in the report; it is stored on the same table
-// under a membership role rather than in a second table.
+// set is rendered "in a visually distinct style, for contrast" and counted in
+// the report; it is stored on the same table under a membership role rather
+// than in a second table.
 func (r *NetworkRepository) ListNetworkAccounts(
 	ctx context.Context, networkID uuid.UUID, role, sortBy, search string, limit, offset int,
 ) ([]NetworkAccountRow, int64, error) {
@@ -586,7 +585,7 @@ func accountOrderClause(sortBy string) string {
 	}
 }
 
-// FindNetworkAccount loads one membership row for the US55 drawer.
+// FindNetworkAccount loads one membership row for the account drawer.
 func (r *NetworkRepository) FindNetworkAccount(ctx context.Context, networkID, accountID uuid.UUID) (*NetworkAccountRow, error) {
 	var row NetworkAccountRow
 	err := r.db.WithContext(ctx).
@@ -615,7 +614,7 @@ type EdgeRow struct {
 }
 
 // ListEdges returns a network's retained edges with their per-family
-// decomposition (US51's hover detail).
+// decomposition, for the graph's hover detail.
 func (r *NetworkRepository) ListEdges(ctx context.Context, networkID uuid.UUID) ([]EdgeRow, error) {
 	var rows []EdgeRow
 	err := r.db.WithContext(ctx).
@@ -632,7 +631,7 @@ func (r *NetworkRepository) ListEdges(ctx context.Context, networkID uuid.UUID) 
 // ListEdgesForAccount returns the specific edges that connected one account to
 // its network.
 //
-// This is the query behind US55's hard rule: "No account may appear in a
+// This is the query behind the system's hard rule: "No account may appear in a
 // network without a viewable reason." Every edge carries its per-family weights,
 // so "why was this account included?" always resolves to a concrete answer.
 func (r *NetworkRepository) ListEdgesForAccount(ctx context.Context, networkID, accountID uuid.UUID) ([]EdgeRow, error) {
@@ -648,7 +647,7 @@ func (r *NetworkRepository) ListEdgesForAccount(ctx context.Context, networkID, 
 	return rows, classify(err)
 }
 
-// ListBurstBins returns the US53 timeline.
+// ListBurstBins returns the posting-burst timeline.
 func (r *NetworkRepository) ListBurstBins(ctx context.Context, networkID uuid.UUID) ([]models.AINetworkBurstBin, error) {
 	var rows []models.AINetworkBurstBin
 	err := r.db.WithContext(ctx).
@@ -666,11 +665,11 @@ type EvidencePostRow struct {
 	Platform                     string `gorm:"column:platform"`
 }
 
-// ListEvidencePosts returns a network's snapshotted posts (US54, US60's
-// posts.csv).
+// ListEvidencePosts returns a network's snapshotted posts, backing both the UI
+// view and the posts.csv export.
 //
 // Ordered so that each duplicate group's canonical post leads its variants,
-// which is the shape US54 renders and the shape PRD 10.8 item 6 prints.
+// which is the shape rendered on screen and the shape printed in the report.
 func (r *NetworkRepository) ListEvidencePosts(ctx context.Context, networkID uuid.UUID, groupID *uuid.UUID) ([]EvidencePostRow, error) {
 	q := r.db.WithContext(ctx).
 		Table("network_evidence_post AS p").
@@ -688,7 +687,7 @@ func (r *NetworkRepository) ListEvidencePosts(ctx context.Context, networkID uui
 }
 
 // FindSnapshot loads the evidence snapshot header for a network's chain of
-// custody (PRD 10.8 item 10).
+// custody.
 func (r *NetworkRepository) FindSnapshot(ctx context.Context, networkID uuid.UUID) (*models.AIEvidenceSnapshot, error) {
 	var snap models.AIEvidenceSnapshot
 	err := r.db.WithContext(ctx).
@@ -706,7 +705,7 @@ func (r *NetworkRepository) FindSnapshot(ctx context.Context, networkID uuid.UUI
 	return &snap, nil
 }
 
-// OfftopicFilter narrows the read-only off-topic cluster review (US62).
+// OfftopicFilter narrows the read-only off-topic cluster review.
 type OfftopicFilter struct {
 	RunID      *uuid.UUID
 	ClaimID    *uuid.UUID
@@ -723,13 +722,13 @@ type OfftopicRow struct {
 	ClaimStatement           *string `gorm:"column:claim_statement"`
 }
 
-// ListOfftopicClusters returns the recalibration view (US62).
+// ListOfftopicClusters returns the recalibration view.
 //
-// These clusters are never surfaced in the network list and never exported in a
-// report — PRD 10.5.1a is explicit that they are not the city's problem and
-// must not appear in a climate report. This one read-only admin surface is
-// their entire reason for being retained: a rising off-topic rate is the signal
-// that omega_min or the candidate scope needs recalibration.
+// These clusters are never surfaced in the network list and never exported in
+// a report — they are not the city's problem and must not appear in a climate
+// report. This one read-only admin surface is their entire reason for being
+// retained: a rising off-topic rate is the signal that the relevance
+// threshold or the candidate scope needs recalibration.
 func (r *NetworkRepository) ListOfftopicClusters(ctx context.Context, f OfftopicFilter) ([]OfftopicRow, int64, error) {
 	q := r.db.WithContext(ctx).
 		Table("offtopic_cluster AS o").
@@ -769,7 +768,8 @@ func (r *NetworkRepository) ListOfftopicClusters(ctx context.Context, f Offtopic
 	return rows, total, nil
 }
 
-// OfftopicRateRow is one run's off-topic rate, the aggregate US62 asks for.
+// OfftopicRateRow is one run's off-topic rate, the aggregate an admin uses to
+// judge relevance-gate calibration.
 type OfftopicRateRow struct {
 	RunID         uuid.UUID `gorm:"column:run_id"`
 	StartedAt     time.Time `gorm:"column:started_at"`
@@ -779,7 +779,7 @@ type OfftopicRateRow struct {
 }
 
 // OfftopicRates returns per-run surfaced-vs-rejected counts so an admin can see
-// whether the relevance gate is set too loose or too tight (US62).
+// whether the relevance gate is set too loose or too tight.
 func (r *NetworkRepository) OfftopicRates(ctx context.Context, limit int) ([]OfftopicRateRow, error) {
 	const query = `
 SELECT run.run_id,
@@ -797,8 +797,8 @@ LIMIT ?`
 	return rows, classify(err)
 }
 
-// NetworkBadge is the minimal per-claim network summary the F1 claim card and
-// claim detail page need (US61).
+// NetworkBadge is the minimal per-claim network summary the claim card and
+// claim detail page need.
 type NetworkBadge struct {
 	ClaimID           uuid.UUID `gorm:"column:claim_id"`
 	NetworkID         uuid.UUID `gorm:"column:network_id"`
@@ -808,44 +808,44 @@ type NetworkBadge struct {
 	ReviewStatus      string    `gorm:"column:review_status"`
 	AccountCount      int       `gorm:"column:account_count"`
 	// OtherCount is how many further networks also qualify for this claim.
-	// US61: "Where more than one network qualifies, show the highest-scoring
-	// one and a count of the others."
+	// Where more than one network qualifies, the UI shows the highest-scoring
+	// one and a count of the others.
 	OtherCount int `gorm:"column:other_count"`
 }
 
-// BadgesForClaims resolves the US61 cross-link for a page of claims in one
-// grouped query.
+// BadgesForClaims resolves the claim page's network cross-link for a page of
+// claims in one grouped query.
 //
 // # The gate, in full
 //
-// US61 states four conditions and every one of them is in the WHERE clause
-// below, because a gate assembled from fewer clauses is the failure mode this
-// endpoint exists to avoid:
+// Four conditions and every one of them is in the WHERE clause below, because
+// a gate assembled from fewer clauses is the failure mode this endpoint
+// exists to avoid:
 //
 //  1. network_claim_link.passed_relevance_gate = true. A run anchored to a
 //     claim does not make the clusters it finds *about* that claim.
-//  2. confidence_band IN (medium, high). F1 has no low-confidence toggle, so a
-//     Low network has no surface here at all.
+//  2. confidence_band IN (medium, high). The claim page has no low-confidence
+//     toggle, so a Low network has no surface here at all.
 //  3. review status is NOT 'dismissed_false_positive'. Without this clause the
 //     claim page badges a network the team has already examined and concluded
 //     was organic — a government telling its own analysts that residents it
 //     cleared are a coordinated network.
-//  4. not suppressed under PRD 10.6.3. Rule 5 makes suppression bind every
-//     surface: "a network invisible in F5 must not be reachable through F1."
-//     The >= 60% allowlisted case (rule 3) is the one that bites, because such
-//     a network is by the team's own declaration civil society coordinating
+//  4. not suppressed. Suppression binds every surface: a network invisible in
+//     the network list must not be reachable through the claim page either.
+//     The >= 60% allowlisted case is the one that bites, because such a
+//     network is by the team's own declaration civil society coordinating
 //     openly.
 //
-// PRD 10.10 forbids expressing this as a disjunction across band and review
-// status — they are orthogonal axes. It is an AND of all four, and the two
-// axes appear as two separate conditions rather than as one combined test.
+// Confidence band and review status are orthogonal axes and must never be
+// expressed as a disjunction across them. It is an AND of all four, and the
+// two axes appear as two separate conditions rather than as one combined test.
 //
 // # Why one query
 //
 // Called with a whole page of claim ids from three different card paths, so an
 // N+1 here would be a per-card round trip. DISTINCT ON picks the highest-scoring
-// qualifying network per claim, and the correlated count supplies US61's "and
-// N others" in the same pass.
+// qualifying network per claim, and the correlated count supplies the "and
+// N others" figure in the same pass.
 func (r *NetworkRepository) BadgesForClaims(ctx context.Context, claimIDs []uuid.UUID) (map[uuid.UUID]NetworkBadge, error) {
 	out := make(map[uuid.UUID]NetworkBadge, len(claimIDs))
 	if len(claimIDs) == 0 {
@@ -889,9 +889,9 @@ ORDER BY l.claim_id, n.coordination_score DESC, n.created_at DESC, n.network_id 
 	).Scan(&rows).Error
 	if err != nil {
 		// A claim page must not 500 because the detector was never deployed.
-		// US61 says the indicator is absent when nothing qualifies, and "the
-		// pipeline does not exist" is a legitimate instance of nothing
-		// qualifying — so F1 degrades to no badge rather than to an error.
+		// The indicator is absent when nothing qualifies, and "the pipeline
+		// does not exist" is a legitimate instance of nothing qualifying — so
+		// the claim page degrades to no badge rather than to an error.
 		if errors.Is(classify(err), ErrPipelineUnavailable) {
 			return out, nil
 		}
@@ -904,7 +904,7 @@ ORDER BY l.claim_id, n.coordination_score DESC, n.created_at DESC, n.network_id 
 	return out, nil
 }
 
-// CountNetworksByStatus returns the per-tab counts for the US44 status filter.
+// CountNetworksByStatus returns the per-tab counts for the status filter.
 func (r *NetworkRepository) CountNetworksByStatus(ctx context.Context, f NetworkFilter) (map[string]int64, error) {
 	type statusCount struct {
 		Status string `gorm:"column:status"`
@@ -952,7 +952,7 @@ type PlatformAccountKey struct {
 }
 
 // ListMemberKeys returns the platform identities of a network's members, for
-// US56's "mark the whole network as legitimate coordination".
+// the "mark the whole network as legitimate coordination" action.
 func (r *NetworkRepository) ListMemberKeys(ctx context.Context, networkID uuid.UUID) ([]PlatformAccountKey, error) {
 	var rows []PlatformAccountKey
 	err := r.db.WithContext(ctx).
@@ -983,7 +983,7 @@ func (r *NetworkRepository) FindAccountKey(ctx context.Context, accountID uuid.U
 }
 
 // NetworkIDsForAccount returns every network an account is a member of, used to
-// relabel history when it is allowlisted (US56).
+// relabel history when it is allowlisted.
 func (r *NetworkRepository) NetworkIDsForAccount(ctx context.Context, platform, platformAccountID string) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	err := r.db.WithContext(ctx).
@@ -998,8 +998,8 @@ func (r *NetworkRepository) NetworkIDsForAccount(ctx context.Context, platform, 
 // ReportedNetworkIDs narrows a set of network ids to those a report has already
 // been generated from.
 //
-// The query behind PRD-v1.4.md open question 9: allowlisting an account
-// "suppresses and relabels" its historical networks, but a PDF citing accounts
+// Allowlisting an account "suppresses and relabels" its historical networks,
+// but a PDF citing accounts
 // since allowlisted may already be in someone's inbox. The suppression cannot
 // reach into that inbox; naming the exports at least makes the exposure
 // answerable.
@@ -1017,11 +1017,11 @@ func (r *NetworkRepository) ReportedNetworkIDs(ctx context.Context, networkIDs [
 }
 
 // UpsertReview writes the current review status overlay and appends to the
-// immutable log, in one transaction (US52).
+// immutable log, in one transaction.
 //
 // The two writes are inseparable: an overlay updated without a log entry loses
-// the decision history PRD 10.9.3 depends on, and a log entry without the
-// overlay leaves the network displaying a status nobody chose.
+// the decision history the precision analysis depends on, and a log entry
+// without the overlay leaves the network displaying a status nobody chose.
 func (r *NetworkRepository) UpsertReview(
 	ctx context.Context,
 	networkID uuid.UUID,
@@ -1070,8 +1070,8 @@ func (r *NetworkRepository) UpsertReview(
 	return &review, nil
 }
 
-// ListReviewLog returns a network's status history, newest first (US59's
-// internal briefing, and the audit trail generally).
+// ListReviewLog returns a network's status history, newest first, for the
+// internal briefing report and the audit trail generally.
 func (r *NetworkRepository) ListReviewLog(ctx context.Context, networkID uuid.UUID, limit int) ([]models.CISNetworkReviewLog, error) {
 	var rows []models.CISNetworkReviewLog
 	q := r.db.WithContext(ctx).
@@ -1091,8 +1091,8 @@ type DismissalRow struct {
 	NetworkLabel               *string `gorm:"column:network_label"`
 }
 
-// ListDismissals returns the false-positive dismissals PRD 10.9.3 requires to
-// be reviewable in aggregate.
+// ListDismissals returns the false-positive dismissals, reviewable in
+// aggregate.
 //
 // The signal profile comes from the LOG ROW, not from a join to
 // coordinated_network. That is the whole point of snapshotting it at write
@@ -1147,7 +1147,7 @@ func (r *NetworkRepository) ListDismissals(ctx context.Context, from, to *time.T
 }
 
 // DecisionCounts totals every terminal review decision in a window, for the
-// precision figure PRD 10.9.3 sets a target on (> 0.85, rolling 90 days).
+// precision figure tracked against a target (> 0.85, rolling 90 days).
 type DecisionCounts struct {
 	Confirmed   int64 `gorm:"column:confirmed"`
 	ActionTaken int64 `gorm:"column:action_taken"`
@@ -1182,8 +1182,8 @@ FROM latest`
 // ExpiredSnapshotNetworkIDs returns networks whose evidence snapshot has passed
 // its retention date AND from which no report was ever generated.
 //
-// PRD 10.9.1 rule 7: snapshots are retained for a configurable period (default
-// 24 months) and then purged, "except where an associated report has been
+// Snapshots are retained for a configurable period (default 24 months) and
+// then purged, "except where an associated report has been
 // generated, in which case the snapshot is retained as long as the report".
 // That exception has teeth — a report whose evidence has been purged is
 // worthless as evidence — so this can never be a blanket TTL delete.
@@ -1205,17 +1205,16 @@ LIMIT ?`
 	return ids, classify(err)
 }
 
-// ActiveClaimIDsForDetection returns the claims a scheduled run should cover
-// (PRD 10.5.8 item 1).
+// ActiveClaimIDsForDetection returns the claims a scheduled run should cover.
 //
 // Two filters, and both matter:
 //
 //   - status Active, resolved through the cis_claim_reviews overlay exactly as
-//     F1 resolves it.
-//   - claim_type Existing. PRD 10.3 puts detection over Non-Existing/Synthetic
-//     claims out of scope: predicted claims have no real posts, so there is
-//     nothing to cluster. Filtering on status alone would hand the pipeline a
-//     batch of claims it cannot process.
+//     the claim page resolves it.
+//   - claim_type Existing. Detection over Non-Existing/Synthetic claims is out
+//     of scope: predicted claims have no real posts, so there is nothing to
+//     cluster. Filtering on status alone would hand the pipeline a batch of
+//     claims it cannot process.
 func (r *NetworkRepository) ActiveClaimIDsForDetection(ctx context.Context, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	q := r.db.WithContext(ctx).
@@ -1233,7 +1232,7 @@ func (r *NetworkRepository) ActiveClaimIDsForDetection(ctx context.Context, limi
 }
 
 // VelocityTriggeredClaimIDs returns Active Existing claims whose Velocity has
-// crossed the configured threshold (PRD 10.5.8 item 2).
+// crossed the configured threshold.
 //
 // A sudden growth spike is exactly when a network is most likely present and
 // most detectable, which is why this trigger exists at all.

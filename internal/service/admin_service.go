@@ -18,7 +18,7 @@ import (
 // ingestion request.
 const maxSampleContentCount = 50
 
-// AdminService serves the F4 MVP utilities and the operational jobs that drive
+// AdminService serves the MVP utilities and the operational jobs that drive
 // the AI pipeline.
 //
 // Four of its methods exist for one structural reason: the frontend can only
@@ -43,7 +43,7 @@ func NewAdminService(
 	return &AdminService{ai: ai, settings: settings, policies: policies, claims: claims}
 }
 
-// GenerateClaimResult reports the outcome of the F4 test-data button.
+// GenerateClaimResult reports the outcome of the test-data button.
 type GenerateClaimResult struct {
 	ClaimID        *string   `json:"claim_id"`
 	ClaimStatement string    `json:"claim_statement"`
@@ -52,7 +52,7 @@ type GenerateClaimResult struct {
 	Message        string    `json:"message"`
 }
 
-// GenerateGenericClaim triggers the "Generate Generic Claim" button (US33).
+// GenerateGenericClaim triggers the "Generate Generic Claim" button.
 //
 // The backend cannot create the claim itself: `claims` is owned by the AI
 // service and this backend never writes AI-owned tables. So the request is
@@ -76,7 +76,7 @@ func (s *AdminService) GenerateGenericClaim(ctx context.Context, topicID *string
 		return nil, aiUnavailable("generate a claim", err)
 	}
 
-	// US33: the S1 "last fetched" label must move to the moment the button was
+	// The "last fetched" label must move to the moment the button was
 	// clicked.
 	now := time.Now().UTC()
 	lastFetched, err := s.settings.TouchClaimsLastFetchedAt(ctx, now, triggeredBy)
@@ -123,8 +123,7 @@ type SampleContentResult struct {
 	Message               string    `json:"message"`
 }
 
-// GenerateSampleContent populates the databank with fabricated content
-// (Flow 6).
+// GenerateSampleContent populates the databank with fabricated content.
 //
 // Until a live crawler exists, the AI service's synthetic ingestion is the only
 // way `content_items` — and therefore Existing claims — come into being at all.
@@ -153,8 +152,8 @@ func (s *AdminService) GenerateSampleContent(ctx context.Context, in GenerateSam
 		return nil, aiUnavailable("generate sample content", err)
 	}
 
-	// New content means new claims, so the S1 "last fetched" label must move for
-	// the same reason US33 requires it to after the claim generator runs.
+	// New content means new claims, so the "last fetched" label must move for
+	// the same reason it does after the claim generator runs.
 	lastFetched, err := s.settings.TouchClaimsLastFetchedAt(ctx, time.Now().UTC(), triggeredBy)
 	if err != nil {
 		return nil, err
@@ -206,15 +205,15 @@ type RescoreResult struct {
 	ClaimsRescored int `json:"claims_rescored"`
 }
 
-// Rescore asks the AI service to re-evaluate every existing claim (Flow 5).
+// Rescore asks the AI service to re-evaluate every existing claim.
 //
-// This is what keeps the F3 trend chart from being a straight line. Scores
-// change with wall-clock time even when nothing is ingested: NPR drifts as
-// opposing posts age out of the rolling window, which moves the discount factor
-// and therefore final_claim_score. Nothing in either service recomputes that on
-// a schedule, so the backend's snapshot job calls this first — see
-// scheduler.runScoreSnapshot — and this endpoint exposes the same trigger
-// manually.
+// This is what keeps the Alert page's trend chart from being a straight
+// line. Scores change with wall-clock time even when nothing is ingested:
+// NPR drifts as opposing posts age out of the rolling window, which moves
+// the discount factor and therefore final_claim_score. Nothing in either
+// service recomputes that on a schedule, so the backend's snapshot job
+// calls this first — see scheduler.runScoreSnapshot — and this endpoint
+// exposes the same trigger manually.
 func (s *AdminService) Rescore(ctx context.Context) (*RescoreResult, error) {
 	if !s.ai.Enabled() {
 		return nil, apperr.Unavailable(

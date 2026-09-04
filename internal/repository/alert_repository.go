@@ -13,7 +13,7 @@ import (
 	"github.com/cis/cis-backend/internal/models"
 )
 
-// AlertRepository manages the F3 watchlist (cis_claim_alerts) and reads the
+// AlertRepository manages the watchlist (cis_claim_alerts) and reads the
 // claim data needed to render it.
 type AlertRepository struct {
 	db *gorm.DB
@@ -38,15 +38,15 @@ type AlertRow struct {
 	TopicName       *string    `gorm:"column:topic_name"`
 	TopicID         *uuid.UUID `gorm:"column:topic_id"`
 
-	// Threshold-crossing state (US71). CrossedAt is when this claim last
-	// flipped Over/Under; the service compares it against the reader's own
+	// Threshold-crossing state. CrossedAt is when this claim last flipped
+	// Over/Under; the service compares it against the reader's own
 	// acknowledgment to decide whether the row is still highlighted.
 	CrossedAt        *time.Time `gorm:"column:crossed_at"`
 	CrossedDirection *string    `gorm:"column:crossed_direction"`
 }
 
-// ListAlerts returns the watchlist ordered by most recently appended first
-// (US30), optionally filtered by a claim-statement search (US31).
+// ListAlerts returns the watchlist ordered by most recently appended first,
+// optionally filtered by a claim-statement search.
 func (r *AlertRepository) ListAlerts(ctx context.Context, search string, limit, offset int) ([]AlertRow, int64, error) {
 	base := r.db.WithContext(ctx).
 		Table("cis_claim_alerts AS a").
@@ -101,14 +101,13 @@ func (r *AlertRepository) Create(ctx context.Context, alert *models.CISClaimAler
 }
 
 // DeleteByClaimID removes a claim from the watchlist. Because the row carries
-// chart_visible, deleting it also unchecks the claim from the chart, which is
-// exactly what US14's "Remove" requires.
+// chart_visible, deleting it also unchecks the claim from the chart.
 func (r *AlertRepository) DeleteByClaimID(ctx context.Context, claimID uuid.UUID) (int64, error) {
 	res := r.db.WithContext(ctx).Where("claim_id = ?", claimID).Delete(&models.CISClaimAlert{})
 	return res.RowsAffected, res.Error
 }
 
-// SetChartVisible toggles the [C3] chart checkbox for a watched claim (US28).
+// SetChartVisible toggles the chart checkbox for a watched claim.
 func (r *AlertRepository) SetChartVisible(ctx context.Context, claimID uuid.UUID, visible bool) (int64, error) {
 	res := r.db.WithContext(ctx).
 		Model(&models.CISClaimAlert{}).
@@ -117,7 +116,7 @@ func (r *AlertRepository) SetChartVisible(ctx context.Context, claimID uuid.UUID
 	return res.RowsAffected, res.Error
 }
 
-// ListChartClaimIDs returns the claims currently checked for the chart (US28).
+// ListChartClaimIDs returns the claims currently checked for the chart.
 func (r *AlertRepository) ListChartClaimIDs(ctx context.Context) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	err := r.db.WithContext(ctx).
@@ -129,7 +128,7 @@ func (r *AlertRepository) ListChartClaimIDs(ctx context.Context) ([]uuid.UUID, e
 }
 
 // AlertedClaimIDs returns which of the given claims are on the watchlist,
-// driving the bell icon's filled/outline state on cards (US14).
+// driving the bell icon's filled/outline state on cards.
 func (r *AlertRepository) AlertedClaimIDs(ctx context.Context, claimIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
 	out := make(map[uuid.UUID]bool, len(claimIDs))
 	if len(claimIDs) == 0 {
@@ -151,7 +150,7 @@ func (r *AlertRepository) AlertedClaimIDs(ctx context.Context, claimIDs []uuid.U
 	return out, nil
 }
 
-// --- Threshold-crossing detection (PRD v1.5, US71) ---
+// --- Threshold-crossing detection ---
 
 // ThresholdState is a watched claim's current score alongside the Over/Under
 // status recorded at the previous evaluation.
@@ -181,7 +180,8 @@ func (r *AlertRepository) ListThresholdStates(ctx context.Context, claimIDs []uu
 //
 // direction is empty when the status was merely observed — a first evaluation
 // seeding the baseline, or a claim that has not moved. Passing a direction
-// records the crossing US71 notifies on, and stamps crossed_at.
+// records the crossing that notifications are built from, and stamps
+// crossed_at.
 func (r *AlertRepository) RecordThresholdStatus(
 	ctx context.Context, claimID uuid.UUID, status, direction string, at time.Time,
 ) error {
@@ -197,10 +197,10 @@ func (r *AlertRepository) RecordThresholdStatus(
 }
 
 // CountCrossingsSince counts watched claims whose last crossing is newer than
-// the reader's acknowledgment, which is the US71 sidebar badge number.
+// the reader's acknowledgment, which is the sidebar badge number.
 //
-// A nil since means the user has never opened F3, so every recorded crossing
-// still counts.
+// A nil since means the user has never opened the Alert page, so every
+// recorded crossing still counts.
 func (r *AlertRepository) CountCrossingsSince(ctx context.Context, since *time.Time) (int64, error) {
 	q := r.db.WithContext(ctx).
 		Model(&models.CISClaimAlert{}).
@@ -242,7 +242,8 @@ func (r *AlertRepository) ListCrossingsSince(ctx context.Context, since *time.Ti
 	return rows, err
 }
 
-// AcknowledgedAt returns when a user last opened F3, or nil if never.
+// AcknowledgedAt returns when a user last opened the Alert page, or nil if
+// never.
 func (r *AlertRepository) AcknowledgedAt(ctx context.Context, userID uuid.UUID) (*time.Time, error) {
 	var ack models.CISAlertAcknowledgement
 	err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&ack).Error
@@ -255,7 +256,7 @@ func (r *AlertRepository) AcknowledgedAt(ctx context.Context, userID uuid.UUID) 
 	return &ack.AcknowledgedAt, nil
 }
 
-// Acknowledge records that a user has seen the current crossings (US71).
+// Acknowledge records that a user has seen the current crossings.
 func (r *AlertRepository) Acknowledge(ctx context.Context, userID uuid.UUID, at time.Time) error {
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "user_id"}},

@@ -14,7 +14,7 @@ import (
 	"github.com/cis/cis-backend/internal/scoring"
 )
 
-// SettingService serves the F4 Admin Settings page.
+// SettingService serves the Admin Settings page.
 type SettingService struct {
 	settings *repository.SettingRepository
 	// cache holds a short-lived snapshot of cis_settings. Scoring weights and
@@ -43,7 +43,7 @@ type SettingView struct {
 	UpdatedBy   *string   `json:"updated_by"`
 }
 
-// ThresholdView is the alert threshold payload (US32).
+// ThresholdView is the alert threshold payload.
 type ThresholdView struct {
 	Threshold float64   `json:"threshold"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -64,9 +64,9 @@ func (s *SettingService) List(ctx context.Context) ([]SettingView, error) {
 	return out, nil
 }
 
-// AlertThreshold returns the global Over/Under Threshold cutoff used by F3
-// (US29, US32). It falls back to the documented default when the row is
-// missing, so the Alert page never breaks on a fresh database.
+// AlertThreshold returns the global Over/Under Threshold cutoff. It falls
+// back to the documented default when the row is missing, so the Alert page
+// never breaks on a fresh database.
 //
 // Read through the configuration cache rather than with a query of its own:
 // this is the single most-read setting in the system — every claim list, the
@@ -109,10 +109,10 @@ func (s *SettingService) AlertThresholdView(ctx context.Context) (*ThresholdView
 	return view, nil
 }
 
-// SetAlertThreshold stores a new global threshold (US32).
+// SetAlertThreshold stores a new global threshold.
 func (s *SettingService) SetAlertThreshold(ctx context.Context, threshold float64, updatedBy *uuid.UUID) (*ThresholdView, error) {
-	// The threshold is compared against FinalClaimScore, which PRD 6.5 fixes to
-	// a 0-100 scale, so anything outside that range is meaningless.
+	// The threshold is compared against FinalClaimScore, which is fixed to a
+	// 0-100 scale, so anything outside that range is meaningless.
 	if threshold < scoring.MinScore || threshold > scoring.MaxScore {
 		return nil, apperr.Unprocessable("threshold must be between 0 and 100")
 	}
@@ -141,13 +141,12 @@ func (s *SettingService) SetAlertThreshold(ctx context.Context, threshold float6
 	return view, nil
 }
 
-// MonitoredCity returns the single Indonesian city this instance monitors
-// (PRD v1.5, US65).
+// MonitoredCity returns the single Indonesian city this instance monitors.
 //
 // An unset or unrecognised value falls back to the default rather than
-// erroring: F6 scoped to the wrong city is a smaller failure than an Overview
-// page that will not load, and the stored value can only become unrecognised if
-// the catalog in models shrinks under it.
+// erroring: showing the Overview page for the wrong city is a smaller failure
+// than not showing it at all, and the stored value can only become
+// unrecognised if the catalog in models shrinks under it.
 func (s *SettingService) MonitoredCity(ctx context.Context) models.City {
 	setting, err := s.settings.Get(ctx, models.SettingMonitoredCity)
 	if err == nil {
@@ -159,12 +158,12 @@ func (s *SettingService) MonitoredCity(ctx context.Context) models.City {
 	return city
 }
 
-// SetMonitoredCity stores the F6 scope city (US65).
+// SetMonitoredCity stores the Overview page's scope city.
 //
-// Selecting a city also sets the IANA zone used for city-local timestamps on F5
-// reports (PRD 10.8). Those were two independent settings before v1.5, which
-// meant an instance could be monitoring Makassar while stamping its reports in
-// Jakarta time; US65 gives the city a single source of truth, so the timezone
+// Selecting a city also sets the IANA zone used for city-local timestamps on
+// generated reports. Those were two independent settings before, which meant
+// an instance could be monitoring Makassar while stamping its reports in
+// Jakarta time; the city is now the single source of truth, so the timezone
 // follows it.
 func (s *SettingService) SetMonitoredCity(ctx context.Context, name string, updatedBy *uuid.UUID) (models.City, error) {
 	city, ok := models.FindCity(name)
@@ -192,7 +191,8 @@ func (s *SettingService) SetMonitoredCity(ctx context.Context, name string, upda
 	return city, nil
 }
 
-// ClaimsLastFetchedAt returns the "last fetched" timestamp shown on S1 (US9).
+// ClaimsLastFetchedAt returns the "last fetched" timestamp shown on the
+// Existing Claim section.
 func (s *SettingService) ClaimsLastFetchedAt(ctx context.Context) (time.Time, error) {
 	setting, err := s.settings.Get(ctx, models.SettingClaimsLastFetchedAt)
 	if err != nil {
@@ -209,9 +209,9 @@ func (s *SettingService) ClaimsLastFetchedAt(ctx context.Context) (time.Time, er
 	return parsed, nil
 }
 
-// TouchClaimsLastFetchedAt updates the S1 "last fetched" timestamp. US33
-// requires this to move to the moment the Generate Generic Claim button was
-// clicked.
+// TouchClaimsLastFetchedAt updates the Existing Claim section's "last
+// fetched" timestamp, moving it to the moment the Generate Generic Claim
+// button was clicked.
 func (s *SettingService) TouchClaimsLastFetchedAt(ctx context.Context, at time.Time, updatedBy *uuid.UUID) (time.Time, error) {
 	_, err := s.settings.Upsert(
 		ctx,

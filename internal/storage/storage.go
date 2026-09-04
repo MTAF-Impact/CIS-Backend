@@ -1,5 +1,5 @@
-// Package storage abstracts where files live: uploaded policy documents (PRD
-// US40) and generated coordinated-network evidence (US58, US60).
+// Package storage abstracts where files live: uploaded policy documents and
+// generated coordinated-network evidence.
 //
 // Supabase Storage is the production driver, keeping the container stateless.
 // The local driver exists so the API can be developed without Supabase
@@ -49,7 +49,7 @@ type Storage interface {
 	Bucket() string
 }
 
-// New builds the configured driver for the policy-document bucket (US40).
+// New builds the configured driver for the policy-document bucket.
 func New(cfg config.StorageConfig) (Storage, error) {
 	return NewForBucket(cfg, cfg.SupabaseBucket)
 }
@@ -74,8 +74,8 @@ func NewForBucket(cfg config.StorageConfig, bucket string) (Storage, error) {
 	}
 }
 
-// Allowed upload formats. US40 restricts policy documents to PDF and Word and
-// requires other formats to be rejected with an inline error.
+// Allowed upload formats. Policy documents are restricted to PDF and Word;
+// other formats are rejected with an inline error.
 var allowedExtensions = map[string]string{
 	".pdf":  "application/pdf",
 	".doc":  "application/msword",
@@ -91,7 +91,7 @@ var allowedMimeTypes = map[string]struct{}{
 }
 
 // ValidateDocument checks an upload's extension and declared content type
-// against the US40 allowlist, returning the MIME type to store.
+// against the allowlist, returning the MIME type to store.
 //
 // The extension is authoritative because browsers are inconsistent about the
 // Content-Type they attach to .doc/.docx; the declared type is only used to

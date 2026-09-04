@@ -2,36 +2,35 @@ package models
 
 import "strings"
 
-// The F4 city configuration (PRD v1.5, US65) and the F6 Overview constants it
-// scopes.
+// The Admin Settings city configuration and the Overview constants it scopes.
 //
-// US65 asks for "a single-select dropdown of Indonesian cities". The list is a
-// closed set held in code rather than a table, for two reasons: it is
+// The city picker is a single-select dropdown of Indonesian cities. The list
+// is a closed set held in code rather than a table, for two reasons: it is
 // reference data that changes on a human timescale, not operational data, and
 // making it a table would invite a second source of truth against the IANA
-// zone the F5 report footer already needs (PRD 10.8). Selecting a city
+// zone the coordinated-network report footer already needs. Selecting a city
 // therefore sets both `monitored_city` and `city_timezone` in one action.
 
 // SettingMonitoredCity is the cis_settings key holding the single Indonesian
-// city this instance monitors (PRD US65).
+// city this instance monitors.
 const SettingMonitoredCity = "monitored_city"
 
 // DefaultMonitoredCity matches DefaultCityTimezone: the Jakarta prototype
-// context from PRD 5.3.
+// context.
 const DefaultMonitoredCity = "Jakarta"
 
-// City is one option of the US65 dropdown.
+// City is one option of the city dropdown.
 type City struct {
 	Name string `json:"name"`
 	// Province is shown beside the name so "Tangerang" and "Tangerang Selatan"
 	// are distinguishable in the dropdown.
 	Province string `json:"province"`
 	// Timezone is the IANA zone applied to city-local timestamps when this city
-	// is selected (PRD 10.8). Indonesia spans WIB/WITA/WIT.
+	// is selected. Indonesia spans WIB/WITA/WIT.
 	Timezone string `json:"timezone"`
 }
 
-// IndonesianCities is the closed set US65 selects from.
+// IndonesianCities is the closed set the city dropdown selects from.
 var IndonesianCities = []City{
 	{Name: "Jakarta", Province: "DKI Jakarta", Timezone: "Asia/Jakarta"},
 	{Name: "Bandung", Province: "Jawa Barat", Timezone: "Asia/Jakarta"},

@@ -23,10 +23,10 @@ type Handlers struct {
 	Setting *handler.SettingHandler
 	Admin   *handler.AdminHandler
 
-	// F6 — Overview.
+	// Overview.
 	Overview *handler.OverviewHandler
 
-	// F5 — Coordinated-Network Detector.
+	// Coordinated-Network Detector.
 	Network         *handler.NetworkHandler
 	Allowlist       *handler.AllowlistHandler
 	Detection       *handler.DetectionHandler
@@ -71,23 +71,22 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	internal := v1.Group("/internal")
 	internal.Post("/policies/:id/matchmaking-result", h.Policy.MatchmakingResult)
 	// The detector's exclusion lists, read by the pipeline before candidate
-	// selection (PRD 10.5.1, 10.5.2.2). The one place the read direction
-	// between the two services reverses: the backend owns the declared-
-	// coordination allowlist and the common-phrase list, and the AI service
-	// consumes them.
+	// selection. The one place the read direction between the two services
+	// reverses: the backend owns the declared-coordination allowlist and the
+	// common-phrase list, and the AI service consumes them.
 	internal.Get("/detection/exclusions", h.Allowlist.Exclusions)
 
-	// F6 — Overview. First in the sidebar (US66), and so first here.
+	// Overview. First in the sidebar, and so first here.
 	overview := v1.Group("/overview", authed)
 	overview.Get("/topics/:id", h.Overview.Topic)
 	overview.Get("/", h.Overview.Page)
 
-	// Topics — the filter chips shared by S1 and S2 (US6, US15).
+	// Topics — the filter chips shared by the Existing and Non-Existing claim sections.
 	topics := v1.Group("/topics", authed)
 	topics.Get("/", h.Topic.List)
 	topics.Get("/:id", h.Topic.Detail)
 
-	// F1 — Claim Repository Bank.
+	// Claim Repository Bank.
 	claims := v1.Group("/claims", authed)
 	// Registered before "/:id" so the literal path is not captured as an id.
 	claims.Get("/repository", h.Claim.Repository)
@@ -98,11 +97,11 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	claims.Get("/:id/policies", h.Claim.Policies)
 	claims.Get("/:id/score-history", h.Claim.ScoreHistory)
 	claims.Put("/:id/status", h.Claim.UpdateStatus)
-	// Flow 4: the one claim mutation that has to travel through the AI service,
+	// The one claim mutation that has to travel through the AI service,
 	// because it writes AI-owned score columns.
 	claims.Put("/:id/harm/confirm", h.Claim.ConfirmHarm)
 
-	// F2 — Public Policy Bank.
+	// Public Policy Bank.
 	policies := v1.Group("/policies", authed)
 	policies.Get("/years", h.Policy.Years)
 	policies.Get("/", h.Policy.List)
@@ -111,17 +110,17 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	policies.Get("/:id/file", h.Policy.Download)
 	policies.Put("/:id/file", h.Policy.ReplaceFile)
 	policies.Get("/:id/processing", h.Policy.ProcessingStatus)
-	// US41: rollout is a human decision, not a nightly derivation from the
+	// Rollout is a human decision, not a nightly derivation from the
 	// rolled-out date. Mirrors PUT /claims/:id/status.
 	policies.Put("/:id/status", h.Policy.UpdateStatus)
 	policies.Post("/:id/rematch", h.Policy.Rematch)
 	policies.Patch("/:id", h.Policy.Update)
 	policies.Delete("/:id", h.Policy.Delete)
 
-	// F3 — Alert Page.
+	// Alert Page.
 	alerts := v1.Group("/alerts", authed)
 	alerts.Get("/chart", h.Alert.Chart)
-	// US71 threshold-crossing notifications. Registered ahead of "/:claimId"
+	// Threshold-crossing notifications. Registered ahead of "/:claimId"
 	// routes so the literal path is never captured as a claim id.
 	alerts.Get("/notifications", h.Alert.Notifications)
 	alerts.Post("/notifications/acknowledge", h.Alert.Acknowledge)
@@ -130,46 +129,46 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	alerts.Delete("/:claimId", h.Alert.Remove)
 	alerts.Patch("/:claimId/chart", h.Alert.SetChartVisibility)
 
-	// F4 — Admin Setting Page.
+	// Admin Setting Page.
 	settings := v1.Group("/settings", authed)
 	settings.Get("/", h.Setting.List)
 	// The dynamic-parameter catalog: every runtime-configurable value with its
 	// bounds, its group and its current value, plus the partial-update writer
-	// the F4 form posts to. Registered before the "/parameters/:key" reset so
-	// the literal path is never captured as a key.
+	// the Admin Settings form posts to. Registered before the "/parameters/:key"
+	// reset so the literal path is never captured as a key.
 	settings.Get("/parameters", h.Setting.Parameters)
 	settings.Put("/parameters", h.Setting.UpdateParameters)
 	settings.Delete("/parameters/:key", h.Setting.ResetParameter)
 	settings.Get("/alert-threshold", h.Setting.GetAlertThreshold)
 	settings.Put("/alert-threshold", h.Setting.UpdateAlertThreshold)
-	// US65 city configuration. "cities" is the dropdown's option list and
+	// City configuration. "cities" is the dropdown's option list and
 	// "city" the current selection; the plural is registered first so neither
 	// shadows the other.
 	settings.Get("/cities", h.Setting.Cities)
 	settings.Get("/city", h.Setting.GetCity)
 	settings.Put("/city", h.Setting.SetCity)
-	// F5 detector configuration (US62). Registered before "/:key"-shaped routes
-	// would be, and with the literal sub-paths first, so "ranges" and "history"
-	// are never captured as a parameter.
+	// Detector configuration. Registered before "/:key"-shaped routes would be,
+	// and with the literal sub-paths first, so "ranges" and "history" are never
+	// captured as a parameter.
 	settings.Get("/detector/ranges", h.DetectorSetting.Ranges)
 	settings.Get("/detector/history", h.DetectorSetting.History)
 	settings.Get("/detector", h.DetectorSetting.Get)
 	settings.Put("/detector", h.DetectorSetting.Update)
 	settings.Get("/history", h.DetectorSetting.AllHistory)
-	// PRD 10.8 requires every report page footer to carry the generation time in
-	// UTC and city-local time, and nothing else in the system knows which city.
+	// Every report page footer needs to carry the generation time in UTC and
+	// city-local time, and nothing else in the system knows which city.
 	settings.Get("/city-timezone", h.DetectorSetting.CityTimezone)
 	settings.Put("/city-timezone", h.DetectorSetting.SetCityTimezone)
 
-	// F5 — Coordinated-Network Detector.
+	// Coordinated-Network Detector.
 	//
-	// Every route is behind the same `authed` guard as F1-F4. There is no role
-	// system anywhere in this backend, including here: the PRD defines no user
-	// or role model, and "As an admin" in US62/US63/US64 is story voice used
-	// since v1.3. The safety property these endpoints rely on is attribution,
-	// not access control — every change records who made it and why, which is
-	// what the review log, the allowlist's added_by/removed_by, and the export
-	// audit log exist for. See docs/ARCHITECTURE.md and PRD-v1.4.md 3.3.
+	// Every route is behind the same `authed` guard as the other feature
+	// groups. There is no role system anywhere in this backend, including
+	// here: "admin" in this API is a feature area, not a permission level.
+	// The safety property these endpoints rely on is attribution, not access
+	// control — every change records who made it and why, which is what the
+	// review log, the allowlist's added_by/removed_by, and the export audit
+	// log exist for. See docs/ARCHITECTURE.md.
 	networks := v1.Group("/networks", authed)
 	networks.Get("/", h.Network.List)
 	networks.Get("/:id", h.Network.Detail)
@@ -195,9 +194,9 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	reports := v1.Group("/reports", authed)
 	reports.Get("/:reportId/file", h.Network.DownloadReport)
 
-	// Detection runs (PRD 10.5.8). The read side is not under /admin: run
-	// truncation and unavailable signal families explain why a network is
-	// banded where it is, which is an analyst's question, not an operator's.
+	// Detection runs. The read side is not under /admin: run truncation and
+	// unavailable signal families explain why a network is banded where it
+	// is, which is an analyst's question, not an operator's.
 	runs := v1.Group("/detection-runs", authed)
 	runs.Get("/", h.Detection.ListRuns)
 	runs.Get("/:id", h.Detection.Run)
@@ -205,7 +204,7 @@ func Register(app *fiber.App, h Handlers, auth *service.AuthService) {
 	admin := v1.Group("/admin", authed)
 	admin.Post("/generate-generic-claim", h.Admin.GenerateGenericClaim)
 
-	// F5 governance surfaces (US62, US63, US64, PRD 10.9.3).
+	// Coordinated-Network Detector governance surfaces.
 	admin.Post("/detection-runs", h.Detection.Trigger)
 	admin.Get("/offtopic-clusters/rates", h.Detection.OfftopicRates)
 	admin.Get("/offtopic-clusters", h.Detection.OfftopicClusters)

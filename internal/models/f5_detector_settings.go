@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// CISDetectorSettings is the F5 detector's governed parameter set (US62).
+// CISDetectorSettings is the coordinated-network detector's governed parameter set.
 //
 // # Why one row with typed columns rather than ~24 cis_settings keys
 //
@@ -23,41 +23,37 @@ import (
 // # The two rules that make this table more than configuration
 //
 //  1. Every change is versioned with the acting user and a timestamp
-//     (CISSettingHistory). US62 requires it, and there is no history anywhere
-//     else in the schema.
+//     (CISSettingHistory) — the only history table anywhere in the schema.
 //  2. Changing a parameter must NEVER retroactively alter a stored detection.
 //     Every run copies the whole set into detection_run.parameters_json when it
 //     executes, so a report generated months later states the configuration
 //     that actually produced it. Nothing reads this table to interpret a past
 //     run.
 //
-// Defaults and ranges are PRD 10.11's, reproduced exactly. Where the PRD gives
-// a parameter no default or range at all, that is called out on the field.
+// Defaults and ranges are reproduced exactly from the governing spec. Where a
+// parameter has no default or range at all, that is called out on the field.
 type CISDetectorSettings struct {
 	// ID is fixed to DetectorSettingsID: there is exactly one row, because the
-	// configuration is global the same way the alert threshold is (US32).
+	// configuration is global the same way the alert threshold is.
 	ID uuid.UUID `gorm:"column:id;type:uuid;primaryKey"`
 
 	// --- Window & bins ---
 
-	// WindowDays is W, the rolling detection window (PRD 10.5.1).
+	// WindowDays is W, the rolling detection window.
 	WindowDays int `gorm:"column:window_days;not null"`
-	// BinWidthSeconds is delta, the temporal-synchrony bin width
-	// (PRD 10.5.2.1).
+	// BinWidthSeconds is delta, the temporal-synchrony bin width.
 	BinWidthSeconds int `gorm:"column:bin_width_seconds;not null"`
 
 	// --- Statistics ---
 
 	// NullModelAlpha is alpha: a pair is retained only if its observed
-	// co-occurrence exceeds the (1 - alpha) quantile of the null model
-	// (PRD 10.5.2.1 step 5).
+	// co-occurrence exceeds the (1 - alpha) quantile of the null model.
 	NullModelAlpha float64 `gorm:"column:null_model_alpha;not null"`
 	// DupThreshold is tau_dup, the MinHash near-duplicate Jaccard cutoff.
 	DupThreshold float64 `gorm:"column:dup_threshold;not null"`
-	// SemThreshold is tau_sem, the multilingual paraphrase cosine cutoff. PRD
-	// 11 flags it as needing separate validation on Bahasa Indonesia and
-	// code-mixed text before launch — a threshold tuned on English will be
-	// miscalibrated.
+	// SemThreshold is tau_sem, the multilingual paraphrase cosine cutoff. It
+	// needs separate validation on Bahasa Indonesia and code-mixed text before
+	// launch — a threshold tuned on English will be miscalibrated.
 	SemThreshold float64 `gorm:"column:sem_threshold;not null"`
 	// MinPostLength is L_min in normalised characters. Below it, "Setuju!!" and
 	// "tolak!" are identical across thousands of unrelated real people.
@@ -67,22 +63,21 @@ type CISDetectorSettings struct {
 
 	// EdgeThreshold is theta_edge, the fused edge-weight floor.
 	EdgeThreshold float64 `gorm:"column:edge_threshold;not null"`
-	// MinSignalFamilies is the multi-signal rule (PRD 10.5.3): how many
-	// distinct families must independently reach 0.25 on an edge. This is the
-	// pipeline's primary false-positive control and the PRD's range starts at
-	// 2 — one is never permissible.
+	// MinSignalFamilies is the multi-signal rule: how many distinct families
+	// must independently reach 0.25 on an edge. This is the pipeline's primary
+	// false-positive control, and its range starts at 2 — one is never
+	// permissible.
 	MinSignalFamilies int `gorm:"column:min_signal_families;not null"`
 	// KCore is k, the k-core reduction depth.
 	KCore int `gorm:"column:k_core;not null"`
 	// LeidenResolution is gamma_res.
 	LeidenResolution float64 `gorm:"column:leiden_resolution;not null"`
-	// MinClusterSize is N_min. Clusters below it are never surfaced
-	// (PRD 10.6.3 rule 1).
+	// MinClusterSize is N_min. Clusters below it are never surfaced.
 	MinClusterSize int `gorm:"column:min_cluster_size;not null"`
 	// MinInternalDensity is rho_min.
 	MinInternalDensity float64 `gorm:"column:min_internal_density;not null"`
 
-	// --- Signal fusion weights (PRD 10.5.3) ---
+	// --- Signal fusion weights ---
 	//
 	// These must sum to 1.00. Each is individually in range at the defaults and
 	// at many other combinations, which is exactly what makes the sum easy to
@@ -95,56 +90,55 @@ type CISDetectorSettings struct {
 
 	// --- Provenance ---
 
-	// ProvenanceHalfLifeHours is h, the creation-time proximity half-life
-	// (PRD 10.5.2.4). One of the 19 parameters PRD 10.11 marks configurable in
-	// F4; without it the w_meta creation-time sub-signal is hardcoded.
+	// ProvenanceHalfLifeHours is h, the creation-time proximity half-life. It
+	// must be admin-configurable; without it the w_meta creation-time
+	// sub-signal is hardcoded.
 	ProvenanceHalfLifeHours int `gorm:"column:provenance_half_life_hours;not null"`
 
-	// --- Claim-relevance gate (PRD 10.5.1a) ---
+	// --- Claim-relevance gate ---
 
 	// AnchorShare is mu_anchor: the share of members needing >= 2 posts in the
 	// claim cluster. Rejects clusters assembled from accounts that touched the
 	// claim once in passing.
 	AnchorShare float64 `gorm:"column:anchor_share;not null"`
 	// MinClaimPosts is P_min. Below it the sample cannot support an inference —
-	// deliberately consistent with the NPR reliability floor in PRD 6.4.7.
+	// deliberately consistent with the NPR reliability floor used elsewhere.
 	MinClaimPosts int `gorm:"column:min_claim_posts;not null"`
 	// MinLinkStrength is omega_min: the overlap_ratio floor establishing that
 	// the claim is a substantive part of what the cluster does.
 	MinLinkStrength float64 `gorm:"column:min_link_strength;not null"`
 
-	// --- Confidence banding (PRD 10.6.2) ---
+	// --- Confidence banding ---
 
 	HighScoreCutoff   float64 `gorm:"column:high_score_cutoff;not null"`
 	HighBreadthCutoff int     `gorm:"column:high_breadth_cutoff;not null"`
 	MediumScoreCutoff float64 `gorm:"column:medium_score_cutoff;not null"`
-	// MediumBreadthCutoff is the floor under the whole guard. PRD 10.6.2: a
-	// high composite score with SignalBreadth = 1 "is the characteristic shape
-	// of a false positive, not of a campaign", so this may never drop to 1.
+	// MediumBreadthCutoff is the floor under the whole guard: a high composite
+	// score with SignalBreadth = 1 is the characteristic shape of a false
+	// positive, not of a campaign, so this may never drop to 1.
 	MediumBreadthCutoff int `gorm:"column:medium_breadth_cutoff;not null"`
 
-	// --- Execution (PRD 10.5.8) ---
+	// --- Execution ---
 
 	// CadenceHours is the scheduled run interval. Its lower bound of 1 hour is
-	// a SCOPE boundary, not a preference: PRD 10.3 puts real-time (sub-hourly)
-	// detection explicitly out of scope for this version.
+	// a scope boundary, not a preference: real-time (sub-hourly) detection is
+	// explicitly out of scope for this version.
 	CadenceHours int `gorm:"column:cadence_hours;not null"`
 	// CandidateCap is A_max.
 	CandidateCap int `gorm:"column:candidate_cap;not null"`
 	// RecurrenceThreshold is the member-set Jaccard at which a new cluster is
-	// recorded as a recurrence of a stored fingerprint (PRD 10.5.7).
+	// recorded as a recurrence of a stored fingerprint.
 	RecurrenceThreshold float64 `gorm:"column:recurrence_threshold;not null"`
 
 	// VelocityTriggerThreshold fires an unscheduled run when a claim's V
-	// crosses it (PRD 10.5.8 item 2) — a growth spike is exactly when a network
-	// is most likely present and most detectable.
+	// crosses it — a growth spike is exactly when a network is most likely
+	// present and most detectable.
 	//
-	// PRD 10.11 OMITS THIS PARAMETER ENTIRELY: US62 and 10.5.8 both require it
-	// to be configurable, but it has no stated default and no stated range. V
-	// is on a 0-100 scale (PRD 6.2.2) so the value is at least well defined.
-	// The default below is a backend placeholder pending a PM ruling, and it is
-	// deliberately the same number as the seeded alert threshold rather than an
-	// invented one. See PRD-v1.4.md open question 8.
+	// This parameter must be configurable but has no documented default or
+	// range: V is on a 0-100 scale, so the value is at least well defined. The
+	// default below is a backend placeholder pending a PM ruling, deliberately
+	// set to the same number as the seeded alert threshold rather than an
+	// invented one.
 	VelocityTriggerThreshold float64 `gorm:"column:velocity_trigger_threshold;not null"`
 
 	// VelocityTriggerEnabled lets the trigger be switched off entirely while
@@ -171,17 +165,16 @@ func (s *CISDetectorSettings) BeforeCreate(*gorm.DB) error {
 	return nil
 }
 
-// AllowlistSuppressionShare is PRD 10.6.3 rule 3's cutoff: a network whose
-// membership is at least 60% allowlisted is suppressed entirely and logged as
-// an allowlist hit.
+// AllowlistSuppressionShare is the cutoff: a network whose membership is at
+// least 60% allowlisted is suppressed entirely and logged as an allowlist
+// hit.
 //
-// Deliberately NOT configurable. US62 enumerates the parameters an admin may
-// govern and this is not among them, and it is the one threshold whose whole
-// purpose is to protect civil society from the tool — a number that can be
-// tuned down under pressure to make a detection "work" is not a safeguard.
+// Deliberately NOT configurable: it is the one threshold whose whole purpose
+// is to protect civil society from the tool — a number that can be tuned
+// down under pressure to make a detection "work" is not a safeguard.
 const AllowlistSuppressionShare = 0.60
 
-// DefaultDetectorSettings returns PRD 10.11's default parameter set.
+// DefaultDetectorSettings returns the detector's default parameter set.
 func DefaultDetectorSettings() CISDetectorSettings {
 	return CISDetectorSettings{
 		ID:                       DetectorSettingsID,
@@ -219,7 +212,7 @@ func DefaultDetectorSettings() CISDetectorSettings {
 }
 
 // ParamRange documents one parameter's admissible interval for the API, so the
-// frontend can render bounded inputs without duplicating PRD 10.11.
+// frontend can render bounded inputs without duplicating them elsewhere.
 type ParamRange struct {
 	Key     string  `json:"key"`
 	Label   string  `json:"label"`
@@ -233,7 +226,7 @@ type ParamRange struct {
 	Note string `json:"note,omitempty"`
 }
 
-// DetectorParamRanges is PRD 10.11's Default Parameter Reference, in full.
+// DetectorParamRanges is the full default parameter reference for the detector.
 //
 // It is data rather than scattered literals so the same source drives
 // validation, the API's self-description, and the tests.
@@ -243,7 +236,7 @@ var DetectorParamRanges = []ParamRange{
 	{Key: "null_model_alpha", Label: "Null-model significance", Symbol: "α", Min: 0.001, Max: 0.05, Default: 0.01},
 	{Key: "dup_threshold", Label: "Near-duplicate threshold", Symbol: "τ_dup", Min: 0.70, Max: 0.95, Default: 0.80},
 	{Key: "sem_threshold", Label: "Semantic paraphrase threshold", Symbol: "τ_sem", Min: 0.80, Max: 0.98, Default: 0.90,
-		Note: "Validate separately on Bahasa Indonesia and code-mixed text before launch (PRD 11)."},
+		Note: "Validate separately on Bahasa Indonesia and code-mixed text before launch."},
 	{Key: "min_post_length", Label: "Minimum post length", Symbol: "L_min", Min: 10, Max: 100, Default: 25, Unit: "characters", Integer: true},
 	{Key: "edge_threshold", Label: "Edge weight threshold", Symbol: "θ_edge", Min: 0.20, Max: 0.70, Default: 0.35},
 	{Key: "min_signal_families", Label: "Minimum signal families per edge", Min: 2, Max: 3, Default: 2, Integer: true,
@@ -257,11 +250,11 @@ var DetectorParamRanges = []ParamRange{
 	{Key: "min_claim_posts", Label: "Minimum claim-cluster posts", Symbol: "P_min", Min: 10, Max: 100, Default: 20, Unit: "posts", Integer: true},
 	{Key: "min_link_strength", Label: "Minimum claim link strength", Symbol: "ω_min", Min: 0.05, Max: 0.50, Default: 0.15},
 	{Key: "cadence_hours", Label: "Scheduled cadence", Min: 1, Max: 24, Default: 6, Unit: "hours", Integer: true,
-		Note: "The 1-hour floor is a scope boundary: PRD 10.3 puts sub-hourly detection out of scope."},
+		Note: "The 1-hour floor is a scope boundary: sub-hourly detection is out of scope."},
 	{Key: "candidate_cap", Label: "Candidate cap", Symbol: "A_max", Min: 500, Max: 20000, Default: 5000, Unit: "accounts", Integer: true},
 	{Key: "recurrence_threshold", Label: "Recurrence match threshold", Min: 0.30, Max: 0.80, Default: 0.50, Unit: "Jaccard"},
 
-	// Not in PRD 10.11's table, but required to be configurable by US62.
+	// Not in the spec's default parameter table, but required to be configurable.
 	{Key: "beta_time", Label: "Fusion weight — temporal synchrony", Symbol: "β_time", Min: 0, Max: 1, Default: 0.30, Note: "The five β must sum to 1.00."},
 	{Key: "beta_text", Label: "Fusion weight — content duplication", Symbol: "β_text", Min: 0, Max: 1, Default: 0.25, Note: "The five β must sum to 1.00."},
 	{Key: "beta_amp", Label: "Fusion weight — co-amplification", Symbol: "β_amp", Min: 0, Max: 1, Default: 0.20, Note: "The five β must sum to 1.00."},
@@ -271,17 +264,17 @@ var DetectorParamRanges = []ParamRange{
 	{Key: "high_breadth_cutoff", Label: "High confidence — SignalBreadth cutoff", Min: 2, Max: 5, Default: 3, Integer: true},
 	{Key: "medium_score_cutoff", Label: "Medium confidence — score cutoff", Min: 0, Max: 100, Default: 55},
 	{Key: "medium_breadth_cutoff", Label: "Medium confidence — SignalBreadth cutoff", Min: 2, Max: 5, Default: 2, Integer: true,
-		Note: "Never 1. PRD 10.6.2: a high composite with SignalBreadth = 1 is the characteristic shape of a false positive."},
+		Note: "Never 1: a high composite with SignalBreadth = 1 is the characteristic shape of a false positive."},
 	{Key: "velocity_trigger_threshold", Label: "Velocity trigger threshold", Min: 0, Max: 100, Default: 70,
-		Note: "PRD 10.11 omits this parameter: no stated default, no stated range. The bounds are V's own 0-100 scale (PRD 6.2.2); the default is a placeholder pending a PM ruling."},
+		Note: "No stated default or range: the bounds are V's own 0-100 scale; the default is a placeholder pending a PM ruling."},
 }
 
 // betaSumTolerance absorbs float64 representation error. 0.30 + 0.25 + 0.20 +
 // 0.15 + 0.10 is not exactly 1.0 in binary floating point, so an exact
-// comparison would reject the PRD's own defaults.
+// comparison would reject the defaults above.
 const betaSumTolerance = 1e-9
 
-// Validate applies PRD 10.11's ranges plus the constraints no single range can
+// Validate applies the ranges above plus the constraints no single range can
 // express, returning one error per offending field.
 //
 // The cross-field checks are the ones worth reading twice. Both are satisfied
@@ -339,7 +332,7 @@ func (s CISDetectorSettings) Validate() map[string]string {
 	checkFloat("recurrence_threshold", s.RecurrenceThreshold)
 	checkFloat("velocity_trigger_threshold", s.VelocityTriggerThreshold)
 
-	// Cross-field 1: the fusion weights must sum to 1.00 (PRD 10.5.3).
+	// Cross-field 1: the fusion weights must sum to 1.00.
 	// w(i,j) = Σ β_k · w_k with Σ β_k = 1 is what keeps the fused edge weight
 	// on the same [0,1] scale as θ_edge, so a sum of 0.9 silently makes every
 	// edge weaker than it is and a sum of 1.1 makes every edge stronger.
@@ -348,8 +341,8 @@ func (s CISDetectorSettings) Validate() map[string]string {
 		errs["beta_weights"] = fmt.Sprintf("the five signal fusion weights must sum to 1.00, got %.4f", sum)
 	}
 
-	// Cross-field 2: cadence <= W/2, which is how PRD 10.5.1's 50% window
-	// overlap is actually enforced.
+	// Cross-field 2: cadence <= W/2, which is how the 50% window overlap
+	// requirement is actually enforced.
 	//
 	// With the defaults this is satisfied by a wide margin — a 7-day window
 	// re-run every 6 hours overlaps by far more than half. But W and the
@@ -361,16 +354,15 @@ func (s CISDetectorSettings) Validate() map[string]string {
 		maxCadence := float64(s.WindowDays) * 24.0 / 2.0
 		if float64(s.CadenceHours) > maxCadence {
 			errs["cadence_hours"] = fmt.Sprintf(
-				"consecutive runs must overlap by 50%% of the window (PRD 10.5.1), so the cadence may not exceed %.0f hours for a %d-day window",
+				"consecutive runs must overlap by 50%% of the window, so the cadence may not exceed %.0f hours for a %d-day window",
 				maxCadence, s.WindowDays,
 			)
 		}
 	}
 
 	// Cross-field 3: High must be strictly harder to reach than Medium.
-	// Nothing in the PRD states it because nothing in the PRD imagines
-	// inverting them, but banding where High is easier than Medium would assign
-	// bands that contradict their own labels.
+	// Nothing enforces this by construction, but banding where High is easier
+	// than Medium would assign bands that contradict their own labels.
 	if s.HighScoreCutoff < s.MediumScoreCutoff {
 		errs["high_score_cutoff"] = "High confidence cannot require a lower score than Medium"
 	}
@@ -401,7 +393,7 @@ func (s CISDetectorSettings) Cadence() time.Duration {
 }
 
 // BandFor returns the confidence band implied by a score and signal breadth
-// under the configured cutoffs (PRD 10.6.2).
+// under the configured cutoffs.
 //
 // The backend does not assign bands — the pipeline does, and the stored value
 // is authoritative. This exists so the settings screen can show an admin what a

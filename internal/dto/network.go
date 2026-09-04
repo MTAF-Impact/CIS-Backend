@@ -2,15 +2,14 @@ package dto
 
 import "time"
 
-// F5 — Coordinated-Network Detector payloads.
+// Coordinated-Network Detector payloads.
 //
-// One rule shapes every struct in this file, and it is PRD 10.9.1's third hard
-// rule: the system never labels an individual account automated, inauthentic,
-// or malicious. Its only claim is that a SET of accounts exhibited measurable
-// coordinated behaviour within a window. So there is no `is_bot`, no
-// `suspicion`, no `verdict` field anywhere below — the nouns are behaviours and
-// counts, and the one judgement in the whole payload is `review_status`, which
-// a person set.
+// One rule shapes every struct in this file: the system never labels an
+// individual account automated, inauthentic, or malicious. Its only claim is
+// that a SET of accounts exhibited measurable coordinated behaviour within a
+// window. So there is no `is_bot`, no `suspicion`, no `verdict` field anywhere
+// below — the nouns are behaviours and counts, and the one judgement in the
+// whole payload is `review_status`, which a person set.
 
 // NetworkClaimRef is a claim a network is linked to, with the relevance-gate
 // figures for that link.
@@ -21,17 +20,16 @@ type NetworkClaimRef struct {
 	Topic          *TopicRef `json:"topic,omitempty"`
 	IsPrimary      bool      `json:"is_primary"`
 
-	// The claim-relevance gate's three figures (PRD 10.5.1a). US50 requires
-	// them on the detail page and PRD 10.8 item 3 in the report, because they
-	// answer a question the signal scores cannot: not "is this coordinated?"
-	// but "is this coordinated *about our claim*?".
+	// The claim-relevance gate's three figures, shown on the detail page and
+	// in the report because they answer a question the signal scores cannot:
+	// not "is this coordinated?" but "is this coordinated *about our claim*?".
 	OverlapRatio        float64 `json:"overlap_ratio"`
 	AnchoringShare      float64 `json:"anchoring_share"`
 	ClaimClusterPosts   int     `json:"claim_cluster_post_count"`
 	PassedRelevanceGate bool    `json:"passed_relevance_gate"`
 }
 
-// RecurrenceInfo summarises how often a network has resurfaced (US46, US49).
+// RecurrenceInfo summarises how often a network has resurfaced.
 type RecurrenceInfo struct {
 	// Count includes the current detection, so a first sighting reads 1.
 	Count       int        `json:"count"`
@@ -40,10 +38,10 @@ type RecurrenceInfo struct {
 	// history through parent_network_id.
 	IsRecurrence bool `json:"is_recurrence"`
 	// PriorClaims are the claims earlier detections in this chain were anchored
-	// to. PRD 10.5.1 requires both the current primary claim and the prior
-	// anchoring claims to be stated: a recurrence inherits history but NOT
-	// relevance, and "this same set of accounts previously amplified claims X
-	// and Y" is the sentence that makes a referral actionable.
+	// to. Both the current primary claim and the prior anchoring claims are
+	// stated: a recurrence inherits history but NOT relevance, and "this same
+	// set of accounts previously amplified claims X and Y" is the sentence
+	// that makes a referral actionable.
 	PriorClaims []PriorAnchorRef `json:"prior_claims,omitempty"`
 }
 
@@ -63,9 +61,9 @@ type PriorAnchorRef struct {
 // It travels with every network rather than being fetched separately because
 // two of its fields change how the network itself must be read: a truncated
 // candidate set means known-incomplete recall, and two or more unavailable
-// signal families caps the whole run at Medium regardless of score
-// (PRD 10.6.3 rule 4). An analyst judging a network without them is judging it
-// on partial information.
+// signal families caps the whole run at Medium regardless of score. An
+// analyst judging a network without them is judging it on partial
+// information.
 type RunContext struct {
 	RunID              string     `json:"run_id"`
 	TriggerSource      string     `json:"trigger_source"`
@@ -84,7 +82,7 @@ type RunContext struct {
 	TruncationNote string `json:"truncation_note,omitempty"`
 }
 
-// NetworkCard is the F5 list representation of a network (US46).
+// NetworkCard is the list representation of a network.
 type NetworkCard struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -105,28 +103,29 @@ type NetworkCard struct {
 
 	Recurrence RecurrenceInfo `json:"recurrence"`
 
-	// LowConfidence flags a card revealed only by the US43 toggle, so the
-	// frontend can de-emphasise it without re-deriving the rule.
+	// LowConfidence flags a card revealed only by the "show low-confidence
+	// networks" toggle, so the frontend can de-emphasise it without
+	// re-deriving the rule.
 	LowConfidence bool `json:"low_confidence"`
 	// FromTruncatedRun surfaces the run-level caveat on the card, because
 	// triage happens on the list and the caveat changes what the score means.
 	FromTruncatedRun bool `json:"from_truncated_run"`
 }
 
-// SignalDetail is one cluster metric with everything US50 requires beside it.
+// SignalDetail is one cluster metric with everything a reviewer needs to
+// interpret it.
 type SignalDetail struct {
 	Code  string  `json:"code"` // SY | DU | CO | PR | AU
 	Name  string  `json:"name"`
 	Score float64 `json:"score"` // 0-100
-	// Method is the one-sentence plain-language description US50 requires: "a
-	// policy reviewer must be able to read this panel without knowing what
-	// conductance is."
+	// Method is a one-sentence plain-language description: a policy reviewer
+	// must be able to read this panel without knowing what conductance is.
 	Method string `json:"method"`
 	// RawCounts is the underlying observation behind the normalised score, not
-	// just the score. US50's example: "43 of 47 accounts posted within the same
-	// 6-minute window, 3 times in 24h".
+	// just the score, e.g. "43 of 47 accounts posted within the same 6-minute
+	// window, 3 times in 24h".
 	RawCounts any `json:"raw_counts,omitempty"`
-	// Weight is this metric's share of the composite (PRD 10.5.5).
+	// Weight is this metric's share of the composite.
 	Weight float64 `json:"weight"`
 	// Available is false when the family behind this metric could not be
 	// measured this run. Distinguished from a score of zero, which is a
@@ -134,14 +133,13 @@ type SignalDetail struct {
 	Available bool `json:"available"`
 }
 
-// ConfidenceExplanation states which banding rule produced the band and why
-// (US50).
+// ConfidenceExplanation states which banding rule produced the band and why.
 type ConfidenceExplanation struct {
 	Band          string `json:"band"`
 	SignalBreadth int    `json:"signal_breadth"`
 	// Rule is the condition that was applied, written out.
 	Rule string `json:"rule"`
-	// CappedByRun records that PRD 10.6.3 rule 4 held this network below the
+	// CappedByRun records that a run-level guard held this network below the
 	// band its score alone would have earned.
 	CappedByRun bool `json:"capped_by_run"`
 	// Note carries the guard's rationale where it is load-bearing — a high
@@ -149,32 +147,32 @@ type ConfidenceExplanation struct {
 	Note string `json:"note,omitempty"`
 }
 
-// WhyFlagged is the US50 "Why this was flagged" panel: the F5 counterpart of
-// US23's score breakdown, carrying the same hard constraint that the composite
-// must never be displayed without access to this.
+// WhyFlagged is the "Why this was flagged" panel: the network-detection
+// counterpart of a claim score breakdown, carrying the same hard constraint
+// that the composite must never be displayed without access to this.
 type WhyFlagged struct {
 	CoordinationScore  float64               `json:"coordination_score"`
 	Signals            []SignalDetail        `json:"signals"`
 	Confidence         ConfidenceExplanation `json:"confidence"`
 	SignalsUnavailable []string              `json:"signals_unavailable"`
 
-	// Structure carries the two cluster-shape figures PRD 10.8 item 5 requires
-	// in the report alongside the graph.
+	// Structure carries the two cluster-shape figures shown in the report
+	// alongside the graph.
 	InternalDensity        float64 `json:"internal_density"`
 	Conductance            float64 `json:"conductance"`
 	ComparisonAccountCount int     `json:"comparison_account_count"`
 
-	// ClaimRelevance is the block US50 requires: overlap_ratio against the
-	// primary claim, the member anchoring share, the cluster's claim-cluster
-	// post count, and any secondary claim links.
+	// ClaimRelevance is overlap_ratio against the primary claim, the member
+	// anchoring share, the cluster's claim-cluster post count, and any
+	// secondary claim links.
 	ClaimRelevance ClaimRelevanceBlock `json:"claim_relevance"`
 
-	// KnownLimitations are the caveats PRD requires to be stated rather than
-	// left implicit — 10.5.2.1's timezone confound in particular.
+	// KnownLimitations are the caveats stated explicitly rather than left
+	// implicit — the timezone confound in particular.
 	KnownLimitations []string `json:"known_limitations"`
 }
 
-// ClaimRelevanceBlock answers "is this coordinated *about our claim*?" (US50).
+// ClaimRelevanceBlock answers "is this coordinated *about our claim*?".
 type ClaimRelevanceBlock struct {
 	PrimaryClaim    *NetworkClaimRef  `json:"primary_claim,omitempty"`
 	SecondaryClaims []NetworkClaimRef `json:"secondary_claims"`
@@ -185,7 +183,7 @@ type ClaimRelevanceBlock struct {
 	MinLinkStrengthThreshold float64 `json:"min_link_strength_threshold"`
 }
 
-// NetworkDetail is the US49/US50 network detail page payload.
+// NetworkDetail is the network detail page payload.
 type NetworkDetail struct {
 	NetworkCard
 
@@ -198,9 +196,9 @@ type NetworkDetail struct {
 
 	Review *NetworkReview `json:"review,omitempty"`
 
-	// Disclaimer is PRD 10.9.2's standing text, required verbatim on every
-	// report AND on the network detail page. It is served rather than
-	// hard-coded in the frontend so the two renderings can never drift.
+	// Disclaimer is the standing text required verbatim on every report AND
+	// on the network detail page. It is served rather than hard-coded in the
+	// frontend so the two renderings can never drift.
 	Disclaimer string `json:"disclaimer"`
 
 	// Export describes whether this network may be exported and, when not, why.
@@ -209,7 +207,7 @@ type NetworkDetail struct {
 	Export ExportEligibility `json:"export"`
 }
 
-// ExportEligibility is US58's gate, evaluated and explained.
+// ExportEligibility is the report-export gate, evaluated and explained.
 type ExportEligibility struct {
 	Allowed bool `json:"allowed"`
 	// Reason is empty when Allowed. When not, it names the failing condition.
@@ -218,7 +216,7 @@ type ExportEligibility struct {
 	AllowedStatuses []string `json:"allowed_statuses"`
 }
 
-// NetworkReview is the current human assessment of a network (US52).
+// NetworkReview is the current human assessment of a network.
 type NetworkReview struct {
 	Status     string     `json:"status"`
 	Reason     string     `json:"reason"`
@@ -226,7 +224,7 @@ type NetworkReview struct {
 	ReviewedAt *time.Time `json:"reviewed_at"`
 }
 
-// NetworkReviewLogEntry is one recorded status change (US52).
+// NetworkReviewLogEntry is one recorded status change.
 type NetworkReviewLogEntry struct {
 	ID         string    `json:"id"`
 	FromStatus string    `json:"from_status"`
@@ -237,11 +235,11 @@ type NetworkReviewLogEntry struct {
 	// SignalProfile is the network's scores as they stood at the moment of the
 	// decision, copied in rather than joined — a later run can recompute them,
 	// and an aggregate built on drifting profiles cannot answer which signal is
-	// systematically over-triggering (PRD 10.9.3).
+	// systematically over-triggering.
 	SignalProfile any `json:"signal_profile,omitempty"`
 }
 
-// UpdateNetworkStatusRequest is the body of PUT /networks/:id/status (US52).
+// UpdateNetworkStatusRequest is the body of PUT /networks/:id/status.
 //
 // The reason is REQUIRED and at least 20 characters, unlike claim review notes
 // which are optional. A network assessment without a stated reason is not
@@ -262,24 +260,24 @@ type NetworkStatusResponse struct {
 	ReviewedBy *string   `json:"reviewed_by"`
 }
 
-// GraphNode is one account in the US51 force-directed graph.
+// GraphNode is one account in the force-directed graph.
 type GraphNode struct {
 	AccountID string `json:"account_id"`
 	Handle    string `json:"handle"`
 	Platform  string `json:"platform"`
 	// Role is "member" or "comparison". Comparison nodes are genuine
 	// unclustered accounts active on the same claim, rendered in a visually
-	// distinct style for contrast (US51) — they are what lets an analyst see
-	// that the cluster is unusual relative to the ordinary conversation.
+	// distinct style for contrast — they are what lets an analyst see that
+	// the cluster is unusual relative to the ordinary conversation.
 	Role string `json:"role"`
 
-	// Size is driven by centrality, per US51.
+	// Size is driven by centrality.
 	DegreeCentrality      float64 `json:"degree_centrality"`
 	EigenvectorCentrality float64 `json:"eigenvector_centrality"`
 	PostsInCluster        int     `json:"posts_in_cluster"`
 
 	// X and Y come from the stored ForceAtlas2 layout so the UI and the PDF
-	// render identically and reports stay byte-deterministic (PRD 10.8).
+	// render identically and reports stay byte-deterministic.
 	X *float64 `json:"x,omitempty"`
 	Y *float64 `json:"y,omitempty"`
 
@@ -288,15 +286,15 @@ type GraphNode struct {
 }
 
 // GraphEdge is one retained behavioural edge with its per-signal decomposition,
-// which is what US51's edge hover shows and what makes membership explainable.
+// which is what the graph's edge hover shows and what makes membership
+// explainable.
 type GraphEdge struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 
 	Weight float64 `json:"weight"`
 	// Signals is the per-family breakdown: this pair scored these values on
-	// these axes. Absent from no edge — PRD 10.5.3 requires every retained edge
-	// to store it.
+	// these axes. Absent from no edge — every retained edge stores it.
 	Signals EdgeSignals `json:"signals"`
 	// SignalCount is how many families cleared the multi-signal threshold.
 	SignalCount int `json:"signal_count"`
@@ -311,14 +309,13 @@ type EdgeSignals struct {
 	Struct float64 `json:"w_struct"`
 }
 
-// NetworkGraph is the US51 payload.
+// NetworkGraph is the network graph payload.
 type NetworkGraph struct {
 	Nodes []GraphNode `json:"nodes"`
 	Edges []GraphEdge `json:"edges"`
 
 	// Reduced records that the graph was rendered as its k-core because the
-	// full node count exceeded the legibility limit. US51: "Must remain legible
-	// up to ~300 nodes; beyond that, render the k-core and note the reduction."
+	// full node count exceeded the legibility limit (~300 nodes).
 	Reduced         bool   `json:"reduced"`
 	ReductionNote   string `json:"reduction_note,omitempty"`
 	TotalNodeCount  int    `json:"total_node_count"`
@@ -326,7 +323,7 @@ type NetworkGraph struct {
 	ComparisonCount int    `json:"comparison_count"`
 }
 
-// BurstBin is one bin of the US53 timeline.
+// BurstBin is one bin of the posting-burst timeline.
 type BurstBin struct {
 	BinStart    time.Time `json:"bin_start"`
 	PostCount   int       `json:"post_count"`
@@ -334,8 +331,9 @@ type BurstBin struct {
 	IsAnomalous bool      `json:"is_anomalous"`
 }
 
-// BurstTimeline is the US53 payload. The bin width is stated rather than
-// implied, because a burst chart is unreadable without knowing what a bar spans.
+// BurstTimeline is the posting-burst timeline payload. The bin width is
+// stated rather than implied, because a burst chart is unreadable without
+// knowing what a bar spans.
 type BurstTimeline struct {
 	BinWidthSeconds int        `json:"bin_width_seconds"`
 	WindowStart     time.Time  `json:"window_start"`
@@ -344,7 +342,7 @@ type BurstTimeline struct {
 	AnomalousCount  int        `json:"anomalous_count"`
 }
 
-// EvidencePost is one snapshotted post (US54).
+// EvidencePost is one snapshotted post.
 type EvidencePost struct {
 	ID             string    `json:"id"`
 	AccountID      string    `json:"account_id"`
@@ -357,8 +355,8 @@ type EvidencePost struct {
 	ContentSHA256  string    `json:"content_sha256"`
 	IsCanonical    bool      `json:"is_canonical"`
 
-	// StillPublic is false for a post deleted since capture. US54 requires it
-	// to remain visible, marked — the snapshot is the evidence, and content
+	// StillPublic is false for a post deleted since capture. It remains
+	// visible, marked — the snapshot is the evidence, and content
 	// disappearing is the normal end of a campaign, not a gap in the record.
 	StillPublic bool `json:"still_public"`
 	// Availability is the label to render, so the marker text is identical in
@@ -366,14 +364,13 @@ type EvidencePost struct {
 	Availability string `json:"availability"`
 
 	// SharedSpanStart/End locate the span this variant shares with the group's
-	// canonical text. US54 requires the shared span highlighted and PRD 10.8
-	// item 6 requires the same in the report, so the offsets are computed
-	// server-side rather than in the browser.
+	// canonical text, highlighted in both the UI and the report, so the
+	// offsets are computed server-side rather than in the browser.
 	SharedSpanStart *int `json:"shared_span_start,omitempty"`
 	SharedSpanEnd   *int `json:"shared_span_end,omitempty"`
 }
 
-// DuplicateGroup is one cluster of near-identical posts (US54).
+// DuplicateGroup is one cluster of near-identical posts.
 type DuplicateGroup struct {
 	GroupID       string         `json:"group_id"`
 	CanonicalText string         `json:"canonical_text"`
@@ -381,7 +378,7 @@ type DuplicateGroup struct {
 	Variants      []EvidencePost `json:"variants"`
 }
 
-// RepresentativeContent is the US54 payload.
+// RepresentativeContent is the representative-content payload.
 type RepresentativeContent struct {
 	Groups []DuplicateGroup `json:"groups"`
 	// Ungrouped posts belong to no duplicate group. They are returned so the
@@ -390,12 +387,12 @@ type RepresentativeContent struct {
 	Note      string         `json:"note"`
 }
 
-// AccountAnnexRow is one row of the US55 account annex.
+// AccountAnnexRow is one row of the account annex.
 //
 // Every column here is a measured behaviour or a graph position. None is a
-// verdict: PRD 10.9.1 rule 3 forbids the system labelling an individual account
-// automated, so "circadian coverage 1.00" is reported and "no sleep cycle,
-// therefore a bot" is not.
+// verdict: the system never labels an individual account automated, so
+// "circadian coverage 1.00" is reported and "no sleep cycle, therefore a
+// bot" is not.
 type AccountAnnexRow struct {
 	AccountID         string     `json:"account_id"`
 	Handle            string     `json:"handle"`
@@ -411,31 +408,30 @@ type AccountAnnexRow struct {
 	EigenvectorCentrality float64  `json:"eigenvector_centrality"`
 
 	// ScoreContribution is this account's individual contribution to each
-	// cluster metric (PRD 10.5.6 item 4).
+	// cluster metric.
 	ScoreContribution any `json:"score_contribution,omitempty"`
 
 	Role        string `json:"role"`
 	Allowlisted bool   `json:"allowlisted"`
 }
 
-// AccountDrawer is the US55 per-account view: the account's posts in the
-// cluster and the specific edges that connected it.
+// AccountDrawer is the per-account view: the account's posts in the cluster
+// and the specific edges that connected it.
 //
-// This exists because of one sentence in US55 — "No account may appear in a
-// network without a viewable reason" — and it is the endpoint that makes the
-// sentence true.
+// This is the endpoint that guarantees no account appears in a network
+// without a viewable reason.
 type AccountDrawer struct {
 	Account AccountAnnexRow `json:"account"`
 	Posts   []EvidencePost  `json:"posts"`
 	// ConnectingEdges are the edges, with per-signal weights, that placed this
 	// account in the network.
 	ConnectingEdges []GraphEdge `json:"connecting_edges"`
-	// Explanation renders the answer in words, for the same reason US50
-	// requires plain-language method descriptions.
+	// Explanation renders the answer in words, matching the plain-language
+	// method descriptions used elsewhere.
 	Explanation string `json:"explanation"`
 }
 
-// --- Allowlist (US56, US63) ---
+// --- Allowlist ---
 
 // AllowlistEntry is one protected account.
 type AllowlistEntry struct {
@@ -454,13 +450,13 @@ type AllowlistEntry struct {
 }
 
 // AddAllowlistRequest marks a network or a single account as legitimate
-// coordination (US56).
+// coordination.
 type AddAllowlistRequest struct {
 	Category string `json:"category" validate:"required,oneof=ngo newsroom campaign_group government union other self_exclusion"`
 	Reason   string `json:"reason" validate:"required,min=10,max=2000"`
 }
 
-// CreateAllowlistEntryRequest adds an account manually from F4 (US63).
+// CreateAllowlistEntryRequest adds an account manually from the admin settings page.
 type CreateAllowlistEntryRequest struct {
 	Platform          string `json:"platform" validate:"required,max=64"`
 	PlatformAccountID string `json:"platform_account_id" validate:"required,max=255"`
@@ -469,16 +465,16 @@ type CreateAllowlistEntryRequest struct {
 	Reason            string `json:"reason" validate:"required,min=10,max=2000"`
 }
 
-// UpdateAllowlistEntryRequest edits an active entry (US63).
+// UpdateAllowlistEntryRequest edits an active entry.
 type UpdateAllowlistEntryRequest struct {
 	Category *string `json:"category" validate:"omitempty,oneof=ngo newsroom campaign_group government union other self_exclusion"`
 	Reason   *string `json:"reason" validate:"omitempty,min=10,max=2000"`
 }
 
-// RemoveAllowlistEntryRequest withdraws protection (US63).
+// RemoveAllowlistEntryRequest withdraws protection.
 //
 // The reason is required: removing an organisation's protection is the action
-// that lets the detector flag it again, and US63 requires it to be logged.
+// that lets the detector flag it again, and it must be logged.
 type RemoveAllowlistEntryRequest struct {
 	Reason string `json:"reason" validate:"required,min=10,max=2000"`
 }
@@ -496,7 +492,7 @@ type AllowlistActionResult struct {
 	Note                    string   `json:"note,omitempty"`
 }
 
-// CommonPhrase is one entry of the text exclusion list (PRD 10.5.2.2).
+// CommonPhrase is one entry of the text exclusion list.
 type CommonPhrase struct {
 	ID        string    `json:"id"`
 	Phrase    string    `json:"phrase"`
@@ -512,9 +508,9 @@ type CreateCommonPhraseRequest struct {
 	Notes    *string `json:"notes" validate:"omitempty,max=2000"`
 }
 
-// --- Detector settings (US62) ---
+// --- Detector settings ---
 
-// DetectorSettingsView is the F4 detector configuration payload.
+// DetectorSettingsView is the detector configuration payload.
 type DetectorSettingsView struct {
 	WindowDays      int `json:"window_days"`
 	BinWidthSeconds int `json:"bin_width_seconds"`
@@ -559,9 +555,8 @@ type DetectorSettingsView struct {
 	UpdatedBy *string   `json:"updated_by"`
 
 	// SelfExclusionCount is how many accounts are excluded as the city's own
-	// comms estate. US62 lists the self-exclusion account list among the
-	// controls; it is managed through the allowlist under its own category, and
-	// this is the pointer to it.
+	// comms estate. It is managed through the allowlist under its own
+	// category, and this is the pointer to it.
 	SelfExclusionCount int64 `json:"self_exclusion_count"`
 }
 
@@ -613,7 +608,7 @@ type UpdateDetectorSettingsRequest struct {
 	VelocityTriggerEnabled   *bool    `json:"velocity_trigger_enabled"`
 }
 
-// SettingHistoryEntry is one recorded configuration change (US62).
+// SettingHistoryEntry is one recorded configuration change.
 type SettingHistoryEntry struct {
 	ID        string    `json:"id"`
 	Key       string    `json:"key"`
@@ -623,7 +618,7 @@ type SettingHistoryEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// --- Detection runs (PRD 10.5.8) ---
+// --- Detection runs ---
 
 // TriggerDetectionRequest asks for an on-demand run.
 type TriggerDetectionRequest struct {
@@ -632,7 +627,7 @@ type TriggerDetectionRequest struct {
 	ClaimIDs []string `json:"claim_ids" validate:"required,min=1,max=200,dive,uuid"`
 }
 
-// DetectionRunView is one detection run (US62's run history).
+// DetectionRunView is one detection run, as shown in the run history.
 type DetectionRunView struct {
 	RunID         string `json:"run_id"`
 	Status        string `json:"status"`
@@ -659,7 +654,7 @@ type DetectionRunView struct {
 	Error       *string    `json:"error,omitempty"`
 
 	// Parameters is the configuration in force when the run executed, copied
-	// into the run rather than looked up now. US62: changing a parameter must
+	// into the run rather than looked up now: changing a parameter must
 	// never retroactively alter a stored detection.
 	Parameters any `json:"parameters,omitempty"`
 }
@@ -672,13 +667,13 @@ type TriggerDetectionResponse struct {
 	Message  string   `json:"message"`
 }
 
-// --- Off-topic clusters and dismissals (US62, PRD 10.9.3) ---
+// --- Off-topic clusters and dismissals ---
 
 // OfftopicClusterView is one cluster the relevance gate rejected.
 //
 // Never surfaced in the network list and never exported. This read-only view is
-// the entire reason PRD 10.5.1a retains them: a rising off-topic rate is the
-// signal that omega_min or the candidate scope needs recalibration.
+// the entire reason they are retained: a rising off-topic rate is the signal
+// that the relevance threshold or the candidate scope needs recalibration.
 type OfftopicClusterView struct {
 	ClusterID      string    `json:"cluster_id"`
 	RunID          string    `json:"run_id"`
@@ -693,7 +688,7 @@ type OfftopicClusterView struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// OfftopicRate is one run's surfaced-vs-rejected ratio (US62).
+// OfftopicRate is one run's surfaced-vs-rejected ratio.
 type OfftopicRate struct {
 	RunID         string    `json:"run_id"`
 	StartedAt     time.Time `json:"started_at"`
@@ -703,7 +698,7 @@ type OfftopicRate struct {
 	FailedTests   []string  `json:"failed_tests"`
 }
 
-// DismissalView is one recorded false-positive dismissal (PRD 10.9.3).
+// DismissalView is one recorded false-positive dismissal.
 type DismissalView struct {
 	ID            string    `json:"id"`
 	NetworkID     string    `json:"network_id"`
@@ -714,17 +709,17 @@ type DismissalView struct {
 	SignalProfile any       `json:"signal_profile,omitempty"`
 }
 
-// DismissalSummary is the aggregate view PRD 10.9.3 requires so the team can
-// identify a systematically over-triggering signal and recalibrate beta_k or
-// the thresholds in F4.
+// DismissalSummary is the aggregate view that lets the team identify a
+// systematically over-triggering signal and recalibrate the fusion weights or
+// the thresholds in the detector settings.
 type DismissalSummary struct {
 	WindowDays  int   `json:"window_days"`
 	Confirmed   int64 `json:"confirmed"`
 	ActionTaken int64 `json:"action_taken"`
 	Dismissed   int64 `json:"dismissed"`
 
-	// Precision is confirmed+action_taken over all three. PRD 10.9.3 sets a
-	// recommended operational target above 0.85 on a rolling 90-day basis, and
+	// Precision is confirmed+action_taken over all three. The recommended
+	// operational target is above 0.85 on a rolling 90-day basis, and it
 	// deliberately makes recall secondary: "a missed network costs a missed
 	// referral; a false positive costs a government publicly implying that
 	// residents are bots."
@@ -739,14 +734,14 @@ type DismissalSummary struct {
 	Note             string             `json:"note,omitempty"`
 }
 
-// --- Reports and bundles (US58, US59, US60) ---
+// --- Reports and bundles ---
 
-// GenerateReportRequest is US59's pre-generation modal.
+// GenerateReportRequest is the pre-generation modal's request body.
 type GenerateReportRequest struct {
 	ReportType string `json:"report_type" validate:"required,oneof=platform_referral internal_briefing"`
 
 	// Section toggles. IncludeAccountAnnex is honoured only for an internal
-	// briefing: US59 makes the annex mandatory in a Platform referral and
+	// briefing: the annex is mandatory in a Platform referral and
 	// non-toggleable, because "a referral without the account list is not
 	// actionable".
 	IncludeGraph           *bool `json:"include_graph"`
@@ -767,7 +762,7 @@ type ReportSections struct {
 	Methodology     bool `json:"methodology"`
 }
 
-// ReportView is one generated report (US58).
+// ReportView is one generated report.
 type ReportView struct {
 	ID         string `json:"id"`
 	NetworkID  string `json:"network_id"`
@@ -781,7 +776,7 @@ type ReportView struct {
 	Sections       ReportSections `json:"sections"`
 	RedactAnalysts bool           `json:"redact_analyst_names"`
 
-	// Chain of custody (PRD 10.8 item 10).
+	// Chain of custody.
 	SnapshotID     *string `json:"snapshot_id"`
 	SnapshotSHA256 *string `json:"snapshot_sha256"`
 	AuditID        *string `json:"audit_id"`
@@ -803,7 +798,7 @@ type ReportView struct {
 	ExpiresAt *time.Time `json:"file_url_expires_at,omitempty"`
 }
 
-// ReportDownload tells a client where to fetch one generated artefact (US58).
+// ReportDownload tells a client where to fetch one generated artefact.
 //
 // Returned by `GET /api/v1/reports/:reportId/file?mode=json`. The split exists
 // because the bytes live in object storage and the authorization lives here: a
@@ -823,7 +818,7 @@ type ReportDownload struct {
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
 
-// AuditLogEntry is one export audit record (US64).
+// AuditLogEntry is one export audit record.
 type AuditLogEntry struct {
 	ID         string    `json:"id"`
 	ObjectType string    `json:"object_type"`

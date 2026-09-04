@@ -10,8 +10,8 @@ import (
 	"github.com/cis/cis-backend/internal/service"
 )
 
-// AllowlistHandler serves the declared-coordination allowlist (US56, US63) and
-// the common-phrase exclusion list (PRD 10.5.2.2).
+// AllowlistHandler serves the declared-coordination allowlist and the
+// common-phrase exclusion list.
 type AllowlistHandler struct {
 	allowlist *service.AllowlistService
 }
@@ -21,7 +21,7 @@ func NewAllowlistHandler(allowlist *service.AllowlistService) *AllowlistHandler 
 	return &AllowlistHandler{allowlist: allowlist}
 }
 
-// List handles GET /api/v1/admin/allowlist (US63).
+// List handles GET /api/v1/admin/allowlist.
 func (h *AllowlistHandler) List(c *fiber.Ctx) error {
 	rows, total, page, err := h.allowlist.List(c.UserContext(), service.ListAllowlistQuery{
 		Search:   c.Query("q"),
@@ -39,12 +39,12 @@ func (h *AllowlistHandler) List(c *fiber.Ctx) error {
 	return response.List(c, "declared-coordination allowlist", rows, response.NewMeta(page.Page, page.Limit, total))
 }
 
-// Categories handles GET /api/v1/admin/allowlist/categories (US63).
+// Categories handles GET /api/v1/admin/allowlist/categories.
 //
-// US63 asks for the list to be seeded during onboarding with the city's known
-// civil-society partners, "before the first detection run, not after the first
-// false positive". These counts are how an operator can see at a glance whether
-// that ever happened.
+// The list is meant to be seeded during onboarding with the city's known
+// civil-society partners, before the first detection run rather than after
+// the first false positive. These counts are how an operator can see at a
+// glance whether that ever happened.
 func (h *AllowlistHandler) Categories(c *fiber.Ctx) error {
 	counts, err := h.allowlist.Categories(c.UserContext())
 	if err != nil {
@@ -53,7 +53,7 @@ func (h *AllowlistHandler) Categories(c *fiber.Ctx) error {
 	return response.OK(c, "allowlist entries per category", counts)
 }
 
-// Create handles POST /api/v1/admin/allowlist (US63).
+// Create handles POST /api/v1/admin/allowlist.
 func (h *AllowlistHandler) Create(c *fiber.Ctx) error {
 	var req dto.CreateAllowlistEntryRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -70,7 +70,7 @@ func (h *AllowlistHandler) Create(c *fiber.Ctx) error {
 	return response.Created(c, "account added to the declared-coordination allowlist", res)
 }
 
-// Update handles PATCH /api/v1/admin/allowlist/:id (US63).
+// Update handles PATCH /api/v1/admin/allowlist/:id.
 func (h *AllowlistHandler) Update(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -92,11 +92,11 @@ func (h *AllowlistHandler) Update(c *fiber.Ctx) error {
 	return response.OK(c, "allowlist entry updated", entry)
 }
 
-// Remove handles DELETE /api/v1/admin/allowlist/:id (US63).
+// Remove handles DELETE /api/v1/admin/allowlist/:id.
 //
-// A DELETE with a body, which is unusual — but US63 requires a reason and
-// requires the removal to be logged, and withdrawing an organisation's
-// protection is the change most worth being able to attribute later.
+// A DELETE with a body, which is unusual — but a reason is required and the
+// removal must be logged, since withdrawing an organisation's protection is
+// the change most worth being able to attribute later.
 func (h *AllowlistHandler) Remove(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -118,7 +118,7 @@ func (h *AllowlistHandler) Remove(c *fiber.Ctx) error {
 	return response.OK(c, "allowlist entry removed", entry)
 }
 
-// AllowlistNetwork handles POST /api/v1/networks/:id/allowlist (US56).
+// AllowlistNetwork handles POST /api/v1/networks/:id/allowlist.
 func (h *AllowlistHandler) AllowlistNetwork(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -140,8 +140,7 @@ func (h *AllowlistHandler) AllowlistNetwork(c *fiber.Ctx) error {
 	return response.Created(c, "network marked as legitimate coordination", res)
 }
 
-// AllowlistAccount handles POST /api/v1/networks/:id/accounts/:accountId/allowlist
-// (US56).
+// AllowlistAccount handles POST /api/v1/networks/:id/accounts/:accountId/allowlist.
 func (h *AllowlistHandler) AllowlistAccount(c *fiber.Ctx) error {
 	accountID, err := parsePathUUID(c, "accountId")
 	if err != nil {
@@ -163,7 +162,7 @@ func (h *AllowlistHandler) AllowlistAccount(c *fiber.Ctx) error {
 	return response.Created(c, "account marked as legitimate coordination", res)
 }
 
-// ListPhrases handles GET /api/v1/admin/common-phrases (PRD 10.5.2.2).
+// ListPhrases handles GET /api/v1/admin/common-phrases.
 func (h *AllowlistHandler) ListPhrases(c *fiber.Ctx) error {
 	rows, total, page, err := h.allowlist.ListPhrases(
 		c.UserContext(), c.Query("q"), c.QueryInt("page", dto.DefaultPage), c.QueryInt("limit", dto.DefaultLimit))
@@ -173,7 +172,7 @@ func (h *AllowlistHandler) ListPhrases(c *fiber.Ctx) error {
 	return response.List(c, "common-phrase allowlist", rows, response.NewMeta(page.Page, page.Limit, total))
 }
 
-// CreatePhrase handles POST /api/v1/admin/common-phrases (PRD 10.5.2.2).
+// CreatePhrase handles POST /api/v1/admin/common-phrases.
 func (h *AllowlistHandler) CreatePhrase(c *fiber.Ctx) error {
 	var req dto.CreateCommonPhraseRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -204,8 +203,7 @@ func (h *AllowlistHandler) DeletePhrase(c *fiber.Ctx) error {
 
 // Exclusions handles GET /api/v1/internal/detection/exclusions.
 //
-// Read by the AI pipeline before candidate selection (PRD 10.5.1, 10.5.2.2).
-// This is the one place the read direction between the two services reverses:
+// Read by the AI pipeline before candidate selection. This is the one place the read direction between the two services reverses:
 // everything else the AI service writes and this backend reads.
 //
 // Served whole rather than paged. Applying half an exclusion list is worse than

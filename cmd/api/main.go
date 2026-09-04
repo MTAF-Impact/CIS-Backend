@@ -69,7 +69,7 @@ func main() {
 	if ai.Enabled() {
 		log.Printf("[boot] AI service configured at %s", cfg.AI.BaseURL)
 	} else {
-		log.Println("[boot] AI_SERVICE_URL is unset: policy matchmaking and the F4 claim generator are disabled")
+		log.Println("[boot] AI_SERVICE_URL is unset: policy matchmaking and the claim generator are disabled")
 	}
 
 	// --- dependency graph: repositories -> services -> handlers ---
@@ -79,13 +79,14 @@ func main() {
 	policyRepo := repository.NewPolicyRepository(db)
 	snapshotRepo := repository.NewSnapshotRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
-	// F6 — Overview. Probes for the PRD v1.5 columns at construction, so the
-	// page degrades on a database the AI service has not caught up with rather
-	// than failing.
+	// Overview repository probes for its expected columns at construction, so
+	// the page degrades on a database the AI service has not caught up with
+	// rather than failing.
 	overviewRepo := repository.NewOverviewRepository(db)
-	// F5 — Coordinated-Network Detector. networkRepo reads the AI-owned
-	// pipeline tables and the cis_* overlays; it is also F1's and F2's one F5
-	// dependency, for the US61 indicator on claim cards.
+	// Coordinated-Network Detector. networkRepo reads the AI-owned pipeline
+	// tables and the cis_* overlays; it is also the claims and policies
+	// features' only dependency on it, for the coordinated-network indicator
+	// on claim cards.
 	networkRepo := repository.NewNetworkRepository(db)
 	allowlistRepo := repository.NewAllowlistRepository(db)
 	reportRepo := repository.NewReportRepository(db)
@@ -98,7 +99,7 @@ func main() {
 	adminSvc := service.NewAdminService(ai, settingSvc, policyRepo, claimRepo)
 	overviewSvc := service.NewOverviewService(overviewRepo, policyRepo, settingSvc)
 
-	// The F5 graph. allowlistSvc comes before detectionSvc because the pipeline
+	// The coordinated-network detector's dependency graph. allowlistSvc comes before detectionSvc because the pipeline
 	// is handed the exclusion lists at dispatch, and reportSvc wraps networkSvc
 	// because a report is a rendering of the same detail payload the API
 	// serves — the document and the screen must not be able to disagree.
@@ -128,7 +129,7 @@ func main() {
 	app := fiber.New(fiber.Config{
 		AppName:      cfg.App.Name,
 		ErrorHandler: middleware.ErrorHandler(cfg.App.IsProduction()),
-		// US40 allows policy documents of any size; config resolves 0 to an
+		// Policy documents may be uploaded at any size; config resolves 0 to an
 		// effectively unlimited cap.
 		BodyLimit:    cfg.App.BodyLimitBytes,
 		ReadTimeout:  cfg.App.ReadTimeout,

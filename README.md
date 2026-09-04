@@ -7,9 +7,9 @@ linking them to public policy, and surfacing ready-to-use response content.
 
 Go 1.25 · Fiber v2 · GORM · Supabase (Postgres + Storage)
 
-Implements PRD v1.5 — **F6** Overview, **F1** Claim Repository Bank (with the
-Section 6 Claim Scoring System), **F2** Public Policy Bank, **F3** Alert Page,
-**F4** Admin Settings, and **F5** Coordinated-Network Detector.
+Implements the **Overview** dashboard, the **Claim Repository Bank** (with the
+Claim Scoring System), the **Public Policy Bank**, the **Alert Page**,
+**Admin Settings**, and the **Coordinated-Network Detector**.
 
 ---
 
@@ -41,7 +41,7 @@ All endpoints are documented in Markdown (no Swagger) under
 | [docs/api/README.md](docs/api/README.md) | API conventions, envelope, error codes |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layering and design decisions |
 | [docs/DATABASE.md](docs/DATABASE.md) | Table ownership and schema |
-| [docs/SCORING.md](docs/SCORING.md) | PRD Section 6 as implemented |
+| [docs/SCORING.md](docs/SCORING.md) | The Claim Scoring System as implemented |
 | [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md) | Contract with the AI service |
 
 ---
@@ -63,13 +63,13 @@ Consequences that show up throughout the code:
 
 - **Claim review status** is an overlay table (`cis_claim_reviews`), so an AI
   pipeline re-run can never overwrite a human decision — and vice versa.
-- **F2 policies** live in `cis_policies` and reference the AI's policy id via a
+- **Policies** live in `cis_policies` and reference the AI's policy id via a
   soft `ai_policy_id` link supplied by the matchmaking callback.
-- **F3 score history** is snapshotted into `cis_claim_score_snapshots`, since
+- **Score history** is snapshotted into `cis_claim_score_snapshots`, since
   the AI service stores only a claim's current score.
-- **F6 needs data the v1.4 AI schema does not carry** — per-item sentiment, a
-  city tag, and per-audience debunk variants. All three are optional and the
-  backend degrades rather than fails without them; see
+- **The Overview page needs data the base AI schema does not carry** — per-item
+  sentiment, a city tag, and per-audience debunk variants. All three are
+  optional and the backend degrades rather than fails without them; see
   [docs/sql/02_f6_reference_schema.sql](docs/sql/02_f6_reference_schema.sql).
 
 See [docs/DATABASE.md](docs/DATABASE.md).
@@ -93,7 +93,7 @@ internal/
   storage/            Supabase + local file drivers
   aiclient/           outbound calls to the AI service
   scheduler/          cron jobs
-  scoring/            PRD Section 6 presentation contract
+  scoring/            Claim Scoring System presentation contract
 docs/                 documentation (see above)
 ```
 
@@ -129,7 +129,7 @@ Optional: `AI_SERVICE_URL` and `BACKEND_PUBLIC_URL`. Without the first the
 backend runs normally — policy matchmaking records `skipped`, and every `/admin`
 endpoint that proxies onto the AI service returns `503`.
 
-The AI service needs `BACKEND_URL` pointed back here, or its Flow 2 callbacks
+The AI service needs `BACKEND_URL` pointed back here, or its result callbacks
 never arrive. See [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md) for the whole
 contract and [docs/SETUP.md](docs/SETUP.md#the-ai-services-side-of-the-deployment)
 for the deployment checklist.

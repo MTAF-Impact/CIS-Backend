@@ -13,22 +13,23 @@ import (
 
 // evaluateThresholdCrossings compares every watched claim's current Over/Under
 // status against the status recorded at the previous evaluation and stamps the
-// ones that just flipped (PRD v1.5, US71).
+// ones that just flipped.
 //
 // It is a free function rather than a method because two callers need it and
 // they sit on opposite sides of the graph: the hourly snapshot job, which is
-// AlertService's, and the harm confirmation on the claim detail page, whose
-// system flow in US23 ends "...claim's status on Alert re-evaluates against
-// threshold". Making it a method on either service would mean giving that
-// service a dependency on the other purely to reach one loop.
+// AlertService's, and the harm confirmation on the claim detail page, since
+// confirming harm can move a claim's score across the alert threshold and
+// that has to re-evaluate immediately. Making it a method on either service
+// would mean giving that service a dependency on the other purely to reach
+// one loop.
 //
 // Passing no claimIDs evaluates the whole watchlist.
 //
 // A claim whose stored status is empty has never been evaluated — it was
 // bell-icon'd since the last pass — so its current status is recorded as the
-// baseline without notifying. US71 is explicit that this "only fires for a
-// genuine transition, never for a claim that is already steady above or below
-// threshold", and a first sighting is not a transition.
+// baseline without notifying. A crossing only fires for a genuine transition,
+// never for a claim that is already steady above or below threshold, and a
+// first sighting is not a transition.
 func evaluateThresholdCrossings(
 	ctx context.Context,
 	alerts *repository.AlertRepository,
@@ -65,7 +66,7 @@ func evaluateThresholdCrossings(
 	return crossings, nil
 }
 
-// thresholdStatus resolves a score against the F4 global threshold (US29).
+// thresholdStatus resolves a score against the global alert threshold.
 //
 // An unscored claim is Under. The threshold decides escalation, and escalating
 // on a missing number is the one direction that cannot be defended.

@@ -7,7 +7,7 @@ import (
 	"github.com/cis/cis-backend/internal/service"
 )
 
-// OverviewHandler serves F6, the Overview page (PRD v1.5, Section 11).
+// OverviewHandler serves the Overview page.
 type OverviewHandler struct {
 	overview *service.OverviewService
 }
@@ -17,11 +17,12 @@ func NewOverviewHandler(overview *service.OverviewService) *OverviewHandler {
 	return &OverviewHandler{overview: overview}
 }
 
-// Page handles GET /api/v1/overview: O1, O2 and O3 in one call (US66-US70).
+// Page handles GET /api/v1/overview: the sentiment gauge, topic treemap, and
+// policy leaderboard in one call.
 //
-// ?limit overrides the size of the O3 leaderboard for one request. Omitting it
-// uses the configured overview.top_policy_limit, which is where US70's "Top 10
-// vs top 5" contradiction is actually settled — the query parameter is an
+// ?limit overrides the size of the policy leaderboard for one request.
+// Omitting it uses the configured overview.top_policy_limit, which is where
+// the leaderboard's actual size is settled — the query parameter is an
 // override, not the setting.
 func (h *OverviewHandler) Page(c *fiber.Ctx) error {
 	page, err := h.overview.Page(c.UserContext(), c.QueryInt("limit", 0))
@@ -31,8 +32,8 @@ func (h *OverviewHandler) Page(c *fiber.Ctx) error {
 	return response.OK(c, "overview", page)
 }
 
-// Topic handles GET /api/v1/overview/topics/:id, the O2 treemap's
-// click-through modal (US69).
+// Topic handles GET /api/v1/overview/topics/:id, the treemap's click-through
+// modal.
 func (h *OverviewHandler) Topic(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {

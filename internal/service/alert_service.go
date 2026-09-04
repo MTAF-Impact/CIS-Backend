@@ -14,7 +14,7 @@ import (
 	"github.com/cis/cis-backend/internal/scoring"
 )
 
-// AlertService serves F3, the Alert page.
+// AlertService serves the Alert page.
 type AlertService struct {
 	alerts    *repository.AlertRepository
 	claims    *repository.ClaimRepository
@@ -32,11 +32,11 @@ func NewAlertService(
 	return &AlertService{alerts: alerts, claims: claims, snapshots: snapshots, settings: settings}
 }
 
-// List returns the [C3] watchlist table, newest addition first (US30).
+// List returns the watchlist table, newest addition first.
 //
 // reader identifies whose acknowledgment decides which rows still carry the
-// US71 "just crossed" highlight. It is read before the acknowledgment is
-// written by the caller, so the page the user opens is the one that shows the
+// "just crossed" highlight. It is read before the acknowledgment is written
+// by the caller, so the page the user opens is the one that shows the
 // highlights they are being told about.
 func (s *AlertService) List(
 	ctx context.Context, reader *uuid.UUID, search string, page, limit int,
@@ -65,8 +65,9 @@ func (s *AlertService) List(
 	return out, total, window, nil
 }
 
-// Notifications returns the US71 sidebar badge: how many watched claims have
-// crossed the threshold since this user last opened F3, and which ones.
+// Notifications returns the sidebar badge: how many watched claims have
+// crossed the threshold since this user last opened the Alert page, and
+// which ones.
 func (s *AlertService) Notifications(ctx context.Context, reader *uuid.UUID) (*dto.AlertNotifications, error) {
 	threshold, err := s.settings.AlertThreshold(ctx)
 	if err != nil {
@@ -100,11 +101,11 @@ func (s *AlertService) Notifications(ctx context.Context, reader *uuid.UUID) (*d
 	return out, nil
 }
 
-// Acknowledge clears this user's crossing badge and row highlights (US71).
+// Acknowledge clears this user's crossing badge and row highlights.
 //
-// US71 treats opening F3 as the acknowledgment, so the frontend calls this on
-// entering the page, after rendering the list it was handed. The flagged
-// alternative in the PRD — a per-row dismiss — would be a different endpoint
+// Opening the Alert page counts as the acknowledgment, so the frontend calls
+// this on entering the page, after rendering the list it was handed. A
+// per-row dismiss instead of a page-level one would be a different endpoint
 // shape, not a different mechanism.
 func (s *AlertService) Acknowledge(ctx context.Context, reader *uuid.UUID) (*dto.AlertNotifications, error) {
 	if reader == nil {
@@ -117,7 +118,7 @@ func (s *AlertService) Acknowledge(ctx context.Context, reader *uuid.UUID) (*dto
 }
 
 // EvaluateCrossings re-derives every watched claim's Over/Under status and
-// stamps the ones that just flipped (US71). Called after each score refresh.
+// stamps the ones that just flipped. Called after each score refresh.
 func (s *AlertService) EvaluateCrossings(ctx context.Context) (int, error) {
 	threshold, err := s.settings.AlertThreshold(ctx)
 	if err != nil {
@@ -126,8 +127,8 @@ func (s *AlertService) EvaluateCrossings(ctx context.Context) (int, error) {
 	return evaluateThresholdCrossings(ctx, s.alerts, threshold)
 }
 
-// acknowledgedAt reads a user's last F3 visit. An unauthenticated caller
-// cannot have acknowledged anything, so every crossing counts as new.
+// acknowledgedAt reads a user's last Alert page visit. An unauthenticated
+// caller cannot have acknowledged anything, so every crossing counts as new.
 func (s *AlertService) acknowledgedAt(ctx context.Context, reader *uuid.UUID) (*time.Time, error) {
 	if reader == nil {
 		return nil, nil
@@ -139,10 +140,10 @@ func (s *AlertService) acknowledgedAt(ctx context.Context, reader *uuid.UUID) (*
 	return at, nil
 }
 
-// Add appends a claim to the watchlist after the user confirms the bell dialog
-// (US14).
+// Add appends a claim to the watchlist after the user confirms the bell
+// dialog.
 //
-// Only Existing/Generic claims may be watched: US26 bars Synthetic claims,
+// Only Existing/Generic claims may be watched: Synthetic claims are barred,
 // since the user should not be asked to monitor predictions that may never
 // materialize.
 func (s *AlertService) Add(ctx context.Context, claimID uuid.UUID, addedBy *uuid.UUID) (*dto.AlertMutationResponse, error) {
@@ -176,8 +177,8 @@ func (s *AlertService) Add(ctx context.Context, claimID uuid.UUID, addedBy *uuid
 		ClaimID: claimID,
 		AddedBy: addedBy,
 		AddedAt: now,
-		// Chart visibility starts off: US28 requires the chart to be empty
-		// until the user explicitly checks a claim.
+		// Chart visibility starts off: the chart stays empty until the user
+		// explicitly checks a claim.
 		ChartVisible: false,
 	}
 	if err := s.alerts.Create(ctx, alert); err != nil {
@@ -192,10 +193,10 @@ func (s *AlertService) Add(ctx context.Context, claimID uuid.UUID, addedBy *uuid
 	}, nil
 }
 
-// Remove deletes a claim from the watchlist (US14).
+// Remove deletes a claim from the watchlist.
 //
-// Deleting the row also drops its chart_visible flag, which satisfies US14's
-// requirement that removing a claim unchecks it from the chart and key.
+// Deleting the row also drops its chart_visible flag, so removing a claim
+// unchecks it from the chart and key too.
 func (s *AlertService) Remove(ctx context.Context, claimID uuid.UUID) (*dto.AlertMutationResponse, error) {
 	affected, err := s.alerts.DeleteByClaimID(ctx, claimID)
 	if err != nil {
@@ -211,7 +212,7 @@ func (s *AlertService) Remove(ctx context.Context, claimID uuid.UUID) (*dto.Aler
 	}, nil
 }
 
-// SetChartVisible toggles a watched claim's [C3] chart checkbox (US28).
+// SetChartVisible toggles a watched claim's chart checkbox.
 func (s *AlertService) SetChartVisible(ctx context.Context, claimID uuid.UUID, visible bool) (*dto.AlertMutationResponse, error) {
 	affected, err := s.alerts.SetChartVisible(ctx, claimID, visible)
 	if err != nil {
@@ -227,7 +228,7 @@ func (s *AlertService) SetChartVisible(ctx context.Context, claimID uuid.UUID, v
 	}, nil
 }
 
-// Chart builds the [C1] line chart and [C2] key (US27, US28).
+// Chart builds the line chart and its key.
 func (s *AlertService) Chart(ctx context.Context, granularity string, from, to *time.Time) (*dto.ChartResponse, error) {
 	trunc, err := repository.GranularityToTrunc(granularity)
 	if err != nil {
@@ -242,7 +243,7 @@ func (s *AlertService) Chart(ctx context.Context, granularity string, from, to *
 	res := &dto.ChartResponse{
 		Granularity: trunc,
 		Threshold:   threshold,
-		// US27 fixes the Y axis to the FinalClaimScore scale.
+		// The Y axis is fixed to the FinalClaimScore scale.
 		YAxisMin: scoring.MinScore,
 		YAxisMax: scoring.MaxScore,
 		Series:   []dto.ChartSeries{},
@@ -306,8 +307,9 @@ func (s *AlertService) Chart(ctx context.Context, granularity string, from, to *
 // the history the chart plots. Invoked by the cron job and exposed for manual
 // triggering.
 //
-// Only watched claims are captured: they are the only ones F3 charts, and
-// snapshotting the whole claim table every hour would grow without bound.
+// Only watched claims are captured: they are the only ones the Alert page
+// charts, and snapshotting the whole claim table every hour would grow
+// without bound.
 func (s *AlertService) CaptureSnapshots(ctx context.Context) (int, error) {
 	rows, _, err := s.alerts.ListAlerts(ctx, "", 1000, 0)
 	if err != nil {
@@ -360,16 +362,16 @@ func toAlertRow(row repository.AlertRow, threshold float64, acknowledgedAt *time
 	if row.TopicName != nil && row.TopicID != nil {
 		out.Topic = &dto.TopicRef{ID: row.TopicID.String(), Name: *row.TopicName}
 	}
-	// US29: Over/Under is decided by comparing FinalClaimScore against the F4
-	// global threshold. An unscored claim stays Under rather than being
-	// escalated on missing data.
+	// Over/Under is decided by comparing FinalClaimScore against the global
+	// threshold. An unscored claim stays Under rather than being escalated
+	// on missing data.
 	if out.FinalClaimScore != nil && *out.FinalClaimScore >= threshold {
 		out.ThresholdStatus = dto.ThresholdOver
 	}
 
-	// US29/US71: the row highlight marks a status that *just* flipped, which is
-	// a fact about the reader as much as about the claim — it lasts until they
-	// have seen it. The crossing itself stays on the row either way.
+	// The row highlight marks a status that *just* flipped, which is a fact
+	// about the reader as much as about the claim — it lasts until they have
+	// seen it. The crossing itself stays on the row either way.
 	out.CrossedAt = row.CrossedAt
 	out.CrossedDirection = row.CrossedDirection
 	out.JustCrossed = row.CrossedAt != nil &&

@@ -32,7 +32,7 @@ func TestValidateDocument(t *testing.T) {
 		{"generic content type", "policy.docx", "application/octet-stream",
 			"application/vnd.openxmlformats-officedocument.wordprocessingml.document", false},
 		{"missing content type", "policy.pdf", "", "application/pdf", false},
-		// US40: everything else is rejected with an inline error.
+		// Everything else is rejected with an inline error.
 		{"rejects images", "policy.png", "image/png", "", true},
 		{"rejects text", "policy.txt", "text/plain", "", true},
 		{"rejects no extension", "policy", "application/pdf", "", true},

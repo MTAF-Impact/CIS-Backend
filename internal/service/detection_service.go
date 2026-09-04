@@ -18,16 +18,16 @@ import (
 	"github.com/cis/cis-backend/internal/repository"
 )
 
-// DetectionService owns the three ways a detection run starts (PRD 10.5.8) and
-// the two read-only recalibration surfaces the PRD attaches to them.
+// DetectionService owns the three ways a detection run starts and the two
+// read-only recalibration surfaces built on top of them.
 //
 // It does not run the detection. The maths — Leiden community detection,
 // MinHash with LSH banding, multilingual sentence embeddings, perceptual image
 // hashing, a Poisson-binomial null model, ForceAtlas2 layout — is mature in
-// Python and effectively absent in Go, and the same split already governs the
-// Section 6 claim scores: the AI service computes, this backend reads and
-// presents. What lives here is the scheduling, the scope rules, and the
-// governance around them.
+// Python and effectively absent in Go, and the same split already governs
+// claim scoring: the AI service computes, this backend reads and presents.
+// What lives here is the scheduling, the scope rules, and the governance
+// around them.
 type DetectionService struct {
 	networks  *repository.NetworkRepository
 	claims    *repository.ClaimRepository
@@ -49,15 +49,14 @@ func NewDetectionService(
 
 // MaxScheduledClaims caps how many claims one scheduled sweep hands over.
 //
-// PRD 10.5.8 schedules runs "across all claims with status Active" and sets a
-// 10-minute budget for a single 5,000-account run. A city with hundreds of
-// active claims would otherwise queue more work every six hours than six hours
-// can absorb, and a detector that never finishes a cycle silently stops being a
-// detector. Claims are handed over highest-score first, so the cap sheds the
-// least consequential work.
+// Scheduled runs sweep across all Active claims within a fixed time budget per
+// run. A city with hundreds of active claims would otherwise queue more work
+// every cycle than the budget can absorb, and a detector that never finishes a
+// cycle silently stops being a detector. Claims are handed over highest-score
+// first, so the cap sheds the least consequential work.
 const MaxScheduledClaims = 200
 
-// Trigger starts an on-demand detection run (PRD 10.5.8 item 3).
+// Trigger starts an on-demand detection run.
 func (s *DetectionService) Trigger(
 	ctx context.Context, claimIDs []uuid.UUID, source string,
 ) (*dto.TriggerDetectionResponse, error) {
@@ -65,10 +64,10 @@ func (s *DetectionService) Trigger(
 		return nil, apperr.BadRequest("at least one claim id is required")
 	}
 
-	// PRD 10.3 puts detection over Non-Existing/Synthetic claims (S2) out of
-	// scope: predicted claims have no real posts, so there is nothing to
-	// cluster. Rejecting here rather than letting the pipeline discover it
-	// keeps the error where the user can act on it.
+	// Detection over Non-Existing/Synthetic claims is out of scope: predicted
+	// claims have no real posts, so there is nothing to cluster. Rejecting here
+	// rather than letting the pipeline discover it keeps the error where the
+	// user can act on it.
 	for _, id := range claimIDs {
 		exists, rawType, err := s.claims.ClaimExists(ctx, id)
 		if err != nil {
@@ -112,12 +111,12 @@ func (s *DetectionService) dispatch(
 			"the detection pipeline is not configured: set AI_SERVICE_URL to enable coordinated-network detection")
 	}
 
-	// The window is computed here rather than by the AI service so that
-	// PRD 10.5.1's 50% overlap rule lives in the one place it can be enforced.
-	// The cross-field validation in CISDetectorSettings.Validate guarantees
-	// cadence <= W/2, which is what makes consecutive runs overlap; computing
-	// the window on the far side of the hand-off would put the guarantee out of
-	// reach of its own check.
+	// The window is computed here rather than by the AI service so that the
+	// 50% overlap rule between consecutive runs lives in the one place it can
+	// be enforced. The cross-field validation in CISDetectorSettings.Validate
+	// guarantees cadence <= W/2, which is what makes consecutive runs overlap;
+	// computing the window on the far side of the hand-off would put the
+	// guarantee out of reach of its own check.
 	now := time.Now().UTC()
 	windowEnd := now
 	windowStart := now.Add(-settings.Window())
@@ -127,10 +126,9 @@ func (s *DetectionService) dispatch(
 		return nil, err
 	}
 
-	// The whole parameter set travels with the request. US62: changing a
-	// parameter must never retroactively alter a stored detection, so the run
-	// records what was in force when it executed rather than looking it up
-	// later.
+	// The whole parameter set travels with the request. Changing a parameter
+	// must never retroactively alter a stored detection, so the run records
+	// what was in force when it executed rather than looking it up later.
 	ack, err := s.ai.TriggerDetection(ctx, aiclient.DetectionRunRequest{
 		ClaimIDs:      claimIDs,
 		TriggerSource: source,
@@ -157,16 +155,17 @@ func (s *DetectionService) dispatch(
 	return res, nil
 }
 
-// RunScheduled starts the periodic sweep over Active Existing claims
-// (PRD 10.5.8 item 1). Returns how many claims were handed over, and 0 when the
-// configured cadence has not yet elapsed.
+// RunScheduled starts the periodic sweep over Active Existing claims. Returns
+// how many claims were handed over, and 0 when the configured cadence has not
+// yet elapsed.
 //
 // The cadence is a detector setting (1-24 h), which is why the caller cannot
 // simply be a cron expression: cron specs are fixed when the scheduler starts
-// and this one is edited in F4 at runtime. The job ticks frequently — at least
-// as often as the finest cadence — and this method decides whether the tick is
-// due. That also makes the setting take effect on the next tick rather than on
-// the next restart, which is what an admin changing it expects.
+// and this one is edited in Admin Settings at runtime. The job ticks
+// frequently — at least as often as the finest cadence — and this method
+// decides whether the tick is due. That also makes the setting take effect on
+// the next tick rather than on the next restart, which is what an admin
+// changing it expects.
 func (s *DetectionService) RunScheduled(ctx context.Context) (int, error) {
 	if !s.ai.Enabled() {
 		return 0, nil
@@ -204,16 +203,15 @@ func (s *DetectionService) RunScheduled(ctx context.Context) (int, error) {
 	return len(claimIDs), nil
 }
 
-// RunVelocityTriggered starts a run for claims whose Velocity has spiked
-// (PRD 10.5.8 item 2).
+// RunVelocityTriggered starts a run for claims whose Velocity has spiked.
 //
 // A sudden growth spike is exactly when a network is most likely present and
 // most detectable, which is the entire justification for an unscheduled run.
 //
-// It is off by default: PRD 10.11 omits this parameter altogether — no stated
-// default, no stated range — so firing on a number nobody chose would mean
-// either launching a ten-minute run on every ordinary news cycle or never
-// firing at all, with no way to tell which. See PRD-v1.4.md open question 8.
+// It is off by default: there is no agreed default or range for the trigger
+// threshold, so firing on a number nobody chose would mean either launching a
+// ten-minute run on every ordinary news cycle or never firing at all, with no
+// way to tell which.
 func (s *DetectionService) RunVelocityTriggered(ctx context.Context) (int, error) {
 	if !s.ai.Enabled() {
 		return 0, nil
@@ -241,7 +239,7 @@ func (s *DetectionService) RunVelocityTriggered(ctx context.Context) (int, error
 	return len(claimIDs), nil
 }
 
-// PurgeExpiredSnapshots applies PRD 10.9.1 rule 7's retention with its
+// PurgeExpiredSnapshots applies evidence-snapshot retention with its one
 // exception.
 //
 // Evidence snapshots are kept for a configurable period, default 24 months, and
@@ -281,7 +279,7 @@ func (s *DetectionService) PurgeExpiredSnapshots(ctx context.Context) (int, erro
 	return res.SnapshotsPurged, nil
 }
 
-// Run returns one detection run (US62's run history).
+// Run returns one detection run.
 func (s *DetectionService) Run(ctx context.Context, runID uuid.UUID) (*dto.DetectionRunView, error) {
 	run, err := s.networks.FindRun(ctx, runID)
 	if err != nil {
@@ -297,9 +295,9 @@ func (s *DetectionService) Run(ctx context.Context, runID uuid.UUID) (*dto.Detec
 // ListRuns returns the detection-run history.
 //
 // This exists because truncation and signal unavailability are RUN-level facts
-// that cap confidence for every network in that run (PRD 10.6.3 rule 4). "Why
-// is everything Medium this week?" is a question about runs, not about
-// networks, and without this surface it has no answer.
+// that cap confidence for every network in that run. "Why is everything Medium
+// this week?" is a question about runs, not about networks, and without this
+// surface it has no answer.
 func (s *DetectionService) ListRuns(
 	ctx context.Context, f repository.RunFilter, page, limit int,
 ) ([]dto.DetectionRunView, int64, dto.PageParams, error) {
@@ -352,7 +350,7 @@ func toRunView(r repository.RunRow) dto.DetectionRunView {
 	return view
 }
 
-// OfftopicClusters returns the read-only recalibration view (US62).
+// OfftopicClusters returns the read-only recalibration view.
 //
 // These clusters are real coordinated clusters — commercial spam rings,
 // engagement farms, unrelated political amplification — that happened to pass
@@ -395,7 +393,7 @@ func (s *DetectionService) OfftopicClusters(
 	return out, total, window, nil
 }
 
-// OfftopicRates returns per-run surfaced-vs-rejected ratios (US62).
+// OfftopicRates returns per-run surfaced-vs-rejected ratios.
 func (s *DetectionService) OfftopicRates(ctx context.Context, limit int) ([]dto.OfftopicRate, error) {
 	if limit <= 0 {
 		limit = 30
@@ -424,7 +422,7 @@ func (s *DetectionService) OfftopicRates(ctx context.Context, limit int) ([]dto.
 }
 
 // Dismissals returns recorded false-positive dismissals with their snapshotted
-// signal profiles (PRD 10.9.3).
+// signal profiles.
 func (s *DetectionService) Dismissals(
 	ctx context.Context, from, to *time.Time, page, limit int,
 ) ([]dto.DismissalView, int64, dto.PageParams, error) {
@@ -456,14 +454,14 @@ func (s *DetectionService) Dismissals(
 	return out, total, window, nil
 }
 
-// DismissalSummary is PRD 10.9.3's aggregate: the dismissal rate and the mean
-// signal profile of dismissals, so the team can identify a systematically
-// over-triggering signal and recalibrate beta_k or the thresholds in F4.
+// DismissalSummary aggregates the dismissal rate and the mean signal profile
+// of dismissals, so the team can identify a systematically over-triggering
+// signal and recalibrate beta_k or the thresholds in Admin Settings.
 //
-// It also computes the precision figure the PRD sets a target on. Precision is
-// deliberately the metric and recall is deliberately secondary — "a missed
-// network costs a missed referral; a false positive costs a government publicly
-// implying that residents are bots."
+// It also computes the precision figure the operational target is measured
+// against. Precision is deliberately the metric and recall is deliberately
+// secondary — "a missed network costs a missed referral; a false positive
+// costs a government publicly implying that residents are bots."
 func (s *DetectionService) DismissalSummary(ctx context.Context, windowDays int) (*dto.DismissalSummary, error) {
 	if windowDays <= 0 {
 		windowDays = detector.PrecisionWindowDays

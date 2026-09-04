@@ -12,13 +12,13 @@ import (
 	"github.com/cis/cis-backend/internal/models"
 )
 
-// PolicyRepository manages cis_policies, the backend-owned F2 Public Policy
+// PolicyRepository manages cis_policies, the backend-owned Public Policy
 // Bank, and reads the AI service's `policies` / `claim_policies` tables to
 // resolve correlations.
 //
 // The backend never inserts into the AI's `policies` table. A cis_policies row
 // carries a nullable ai_policy_id soft reference that the AI service fills in
-// once matchmaking completes (US42); every correlation query joins through it.
+// once matchmaking completes; every correlation query joins through it.
 type PolicyRepository struct {
 	db *gorm.DB
 }
@@ -32,12 +32,12 @@ func NewPolicyRepository(db *gorm.DB) *PolicyRepository {
 type PolicyRow struct {
 	models.CISPolicy `gorm:"embedded"`
 	// LastClaimActivityAt is the newest created_at across every claim linked to
-	// this policy, and is what US35 sorts the list by.
+	// this policy, and is what the list is sorted by.
 	LastClaimActivityAt *time.Time `gorm:"column:last_claim_activity_at"`
 	LinkedClaimCount    int64      `gorm:"column:linked_claim_count"`
 }
 
-// PolicyFilter describes the F2 list query (US34, US35, US38).
+// PolicyFilter describes the policy list query.
 type PolicyFilter struct {
 	Years  []int
 	Search string
@@ -83,9 +83,9 @@ func (r *PolicyRepository) baseQuery(ctx context.Context, f PolicyFilter) *gorm.
 	return q
 }
 
-// List returns a page of policies ordered per US35: by the newest linked-claim
-// date, with policies that have no linked claims falling back to their own
-// creation date and sorting after all policies that do have activity.
+// List returns a page of policies ordered by the newest linked-claim date, with
+// policies that have no linked claims falling back to their own creation date
+// and sorting after all policies that do have activity.
 func (r *PolicyRepository) List(ctx context.Context, f PolicyFilter) ([]PolicyRow, int64, error) {
 	var total int64
 	if err := r.baseQuery(ctx, f).Select("COUNT(p.id)").Scan(&total).Error; err != nil {
@@ -148,7 +148,7 @@ func (r *PolicyRepository) Delete(ctx context.Context, id uuid.UUID) (int64, err
 }
 
 // ListYears returns the distinct rolled-out years present in the bank, for the
-// US34 year filter chips.
+// year filter chips.
 func (r *PolicyRepository) ListYears(ctx context.Context) ([]int, error) {
 	var years []int
 	err := r.db.WithContext(ctx).
@@ -168,7 +168,7 @@ func (r *PolicyRepository) ListYears(ctx context.Context) ([]int, error) {
 //     insert and the background goroutine, say).
 //   - failed — the hand-off itself errored.
 //   - processing, but not touched since staleBefore — the AI service acked and
-//     the Flow 2 callback never arrived. This one is the important case:
+//     the matchmaking callback never arrived. This one is the important case:
 //     "processing" is otherwise a terminal state on the backend side, because
 //     only the callback moves it, and the AI service never retries a callback.
 //
@@ -207,8 +207,8 @@ func (r *PolicyRepository) FindAIPoliciesByIDs(ctx context.Context, ids []uuid.U
 }
 
 // FindByAIPolicyIDs loads the cis_policies rows that shadow the given AI policy
-// ids, so a claim's correlated policies can be presented with their F2 metadata
-// (rollout status, document availability) when we have it.
+// ids, so a claim's correlated policies can be presented with their policy
+// metadata (rollout status, document availability) when we have it.
 func (r *PolicyRepository) FindByAIPolicyIDs(ctx context.Context, ids []uuid.UUID) ([]models.CISPolicy, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -242,7 +242,7 @@ func (r *PolicyRepository) CountAIPolicies(ctx context.Context) (int64, error) {
 // danglingAIPolicyLink matches a cis_policies row whose ai_policy_id points at
 // a policy the AI service no longer has. There is no foreign key to cascade —
 // ai_policy_id is deliberately a soft reference — so these survive an AI-side
-// reset and leave the F2 detail page showing a completed badge above empty
+// reset and leave the policy detail page showing a completed badge above empty
 // claim lists.
 const danglingAIPolicyLink = `ai_policy_id IS NOT NULL AND NOT EXISTS (
 	SELECT 1 FROM policies p WHERE p.id = cis_policies.ai_policy_id

@@ -14,11 +14,11 @@ type TopicRef struct {
 
 // ClaimCard is the list representation of a claim.
 //
-// The PRD defines two card variants (5.5). Rather than two incompatible
-// shapes, this one struct carries the Existing-only fields as nullable and
-// omits them entirely for Non-Existing claims, so the frontend can key off
-// `claim_type` and reuse a single parser. Per US18, Synthetic claims never
-// carry a score, dates, or statement counts.
+// There are two card variants. Rather than two incompatible shapes, this one
+// struct carries the Existing-only fields as nullable and omits them entirely
+// for Non-Existing claims, so the frontend can key off `claim_type` and reuse
+// a single parser. Synthetic claims never carry a score, dates, or statement
+// counts.
 type ClaimCard struct {
 	ID             string    `json:"id"`
 	ClaimType      string    `json:"claim_type"` // existing | non_existing
@@ -27,45 +27,46 @@ type ClaimCard struct {
 	ReviewStatus   string    `json:"review_status"` // unreviewed | active | inactive | action_taken
 	CreatedAt      time.Time `json:"created_at"`
 
-	// Existing/Generic claims only (US10).
+	// Existing/Generic claims only.
 	FinalClaimScore        *float64   `json:"final_claim_score,omitempty"`
 	FirstCaughtAt          *time.Time `json:"first_caught_at,omitempty"`
 	PositiveStatementCount *int64     `json:"positive_statement_count,omitempty"`
 	NegativeStatementCount *int64     `json:"negative_statement_count,omitempty"`
 	IsDormant              *bool      `json:"is_dormant,omitempty"`
-	// IsOnAlert drives the bell icon's filled/outline state (US14).
+	// IsOnAlert drives the bell icon's filled/outline state.
 	IsOnAlert *bool `json:"is_on_alert,omitempty"`
 
-	// CoordinatedNetwork drives the US61 indicator icon, so an analyst sees
-	// during triage that a network is amplifying this claim without opening it.
+	// CoordinatedNetwork drives the coordinated-network indicator icon, so an
+	// analyst sees during triage that a network is amplifying this claim
+	// without opening it.
 	//
-	// OMITTED, not null, when nothing qualifies: US61 is explicit that there is
-	// no empty state. The field carries the full badge rather than a bare
-	// boolean because this same card component is reused unmodified on the F2
-	// policy detail page (US10, US39), and a second shape there would be the
-	// policy-specific variant US39 forbids.
+	// OMITTED, not null, when nothing qualifies: there is no empty state for
+	// this indicator. The field carries the full badge rather than a bare
+	// boolean because this same card component is reused unmodified on the
+	// policy detail page, and a second, policy-specific shape there would
+	// defeat that reuse.
 	CoordinatedNetwork *ClaimNetworkBadge `json:"coordinated_network,omitempty"`
 }
 
-// ClaimNetworkBadge is the "Coordinated network detected" indicator (US61).
+// ClaimNetworkBadge is the "Coordinated network detected" indicator.
 //
 // # The gate behind this field
 //
-// US61 states four conditions, ALL of which must hold before this is populated:
+// Four conditions must ALL hold before this is populated:
 //
 //  1. a network_claim_link row exists for the claim with passed_relevance_gate
 //     = true — anchoring a run to a claim does not make what it finds about
 //     that claim;
-//  2. the network's confidence band is Medium or High — F1 has no
-//     low-confidence toggle, so Low has no surface here;
+//  2. the network's confidence band is Medium or High — there is no
+//     low-confidence toggle on the claim list, so Low has no surface here;
 //  3. the network's review status is NOT "Dismissed — False Positive" —
 //     without this the claim page badges a network the team already examined
 //     and concluded was organic;
-//  4. the network is not suppressed under PRD 10.6.3 — rule 5 binds
-//     suppression to every surface: "a network invisible in F5 must not be
-//     reachable through F1".
+//  4. the network is not suppressed — suppression binds to every surface: a
+//     network invisible on the network detail page must not be reachable
+//     from a claim card either.
 //
-// PRD 10.10 forbids expressing this as a DISJUNCTION across band and review
+// This is deliberately not expressed as a disjunction across band and review
 // status: they are orthogonal axes, computed and assigned independently. It is
 // an AND of all four, and the two axes appear as two separate conditions rather
 // than one combined test.
@@ -74,21 +75,21 @@ type ClaimNetworkBadge struct {
 	Label             string  `json:"label"`
 	CoordinationScore float64 `json:"coordination_score"`
 	ConfidenceBand    string  `json:"confidence_band"`
-	// ReviewStatus is displayed, not merely used for filtering. US61: an
-	// analyst deciding whether to rebut or refer must not read "Unreviewed,
-	// Medium" and "Confirmed, High" identically.
+	// ReviewStatus is displayed, not merely used for filtering: an analyst
+	// deciding whether to rebut or refer must not read "Unreviewed, Medium"
+	// and "Confirmed, High" identically.
 	ReviewStatus string `json:"review_status"`
 	AccountCount int    `json:"account_count"`
 	// OtherCount is how many further networks also qualify for this claim.
-	// US61: show the highest-scoring one and a count of the others.
+	// Only the highest-scoring one is shown in full, plus a count of the rest.
 	OtherCount int `json:"other_count"`
-	// DetailURL links through to the F5 network detail page.
+	// DetailURL links through to the network detail page.
 	DetailURL string `json:"detail_url"`
 }
 
-// HarmBreakdown exposes the Harm Severity sub-scores (PRD 6.2.4).
+// HarmBreakdown exposes the Harm Severity sub-scores.
 //
-// These four are the only manually editable values in the whole score (US23);
+// These four are the only manually editable values in the whole score;
 // R, V, F and EI remain AI-only. Editable is therefore a property of this
 // struct, not of ScoreBreakdown.
 type HarmBreakdown struct {
@@ -99,14 +100,14 @@ type HarmBreakdown struct {
 	HumanConfirmed     bool                `json:"human_confirmed"`
 	Weights            scoring.HarmWeights `json:"weights"`
 
-	// Edit is the audit trail of the last human override (US23): who changed
+	// Edit is the audit trail of the last human override: who changed
 	// the sub-scores and when. Omitted while the values are the AI's originals,
 	// which is what lets the UI mark an edited H distinctly from an AI-original
 	// one wherever the badge appears.
 	Edit *HarmEditAudit `json:"edit,omitempty"`
 }
 
-// HarmEditAudit records a human override of the Harm sub-scores (US23).
+// HarmEditAudit records a human override of the Harm sub-scores.
 type HarmEditAudit struct {
 	EditedBy *string   `json:"edited_by"`
 	EditedAt time.Time `json:"edited_at"`
@@ -124,7 +125,7 @@ type HarmPrevious struct {
 	HarmScore          *float64 `json:"harm_score"`
 }
 
-// ScoreBreakdown is the Score Transparency Requirement payload (US23, PRD 6.5).
+// ScoreBreakdown is the Score Transparency payload.
 //
 // Every component is returned together with the collapsed FinalClaimScore, so
 // the final number is never shown without access to its inputs.
@@ -134,8 +135,7 @@ type ScoreBreakdown struct {
 	Falseness          *float64 `json:"falseness"`           // F, 0-100
 	Harm               *float64 `json:"harm"`                // H, 0-100
 	EmotionalIntensity *float64 `json:"emotional_intensity"` // EI supporting side, 0-100
-	// EmotionalIntensityOpposing is display-only and never enters the score
-	// (PRD 6.4.6 / US24).
+	// EmotionalIntensityOpposing is display-only and never enters the score.
 	EmotionalIntensityOpposing *float64 `json:"emotional_intensity_opposing"`
 
 	HarmBreakdown HarmBreakdown `json:"harm_breakdown"`
@@ -149,28 +149,29 @@ type ScoreBreakdown struct {
 	Note      string          `json:"note,omitempty"`
 	Weights   scoring.Weights `json:"weights"`
 
-	// Formula is the plain-language explanation behind the US23 info-tooltip.
+	// Formula is the plain-language explanation behind the info-tooltip.
 	// Served rather than hard-coded in the frontend so the words and the
 	// weights above can never drift apart.
 	Formula string `json:"formula"`
 }
 
-// PolicyRef is a policy correlated with a claim (US12 many-to-many, US20
-// one-to-many).
+// PolicyRef is a policy correlated with a claim, via either the many-to-many
+// join used by Existing claims or the single policy_id column used by
+// Synthetic claims.
 type PolicyRef struct {
 	ID            string     `json:"id"`
 	Name          string     `json:"name"`
-	Source        string     `json:"source"` // cis = registered via F2, ai = created by the AI service
+	Source        string     `json:"source"` // cis = registered through the Public Policy Bank, ai = created by the AI service
 	AIPolicyID    *string    `json:"ai_policy_id,omitempty"`
 	Status        *string    `json:"status,omitempty"` // rolled_out | not_rolled_out
 	RolledOutDate *time.Time `json:"rolled_out_date,omitempty"`
 	HasDocument   bool       `json:"has_document"`
 }
 
-// AccountRef is one row of the Top 5 Accounts panel (US12).
+// AccountRef is one row of the Top 5 Accounts panel.
 //
 // Ranked over the Supporting-side cluster, matching the Reach parameter's
-// scope in PRD 6.1.1.
+// scope.
 type AccountRef struct {
 	Rank             int    `json:"rank"`
 	AuthorID         string `json:"author_id"`
@@ -190,9 +191,9 @@ type DebunkBlocks struct {
 	ReiteratedFact *string `json:"reiterated_fact"`
 }
 
-// ActivityContent is the cached AI-generated Debunk or Prebunk draft
-// (US12, US20). It is generated once by the AI service and served from cache;
-// viewing a claim never triggers a new generation.
+// ActivityContent is the cached AI-generated Debunk or Prebunk draft. It is
+// generated once by the AI service and served from cache; viewing a claim
+// never triggers a new generation.
 type ActivityContent struct {
 	Type        string     `json:"type"` // debunk | prebunk
 	Content     *string    `json:"content"`
@@ -203,9 +204,9 @@ type ActivityContent struct {
 	// paragraph. `content` remains the copyable single block.
 	Debunk *DebunkBlocks `json:"debunk,omitempty"`
 
-	// Segments are the per-audience-segment recommendations US12 requires as of
-	// v1.5: one tailored, individually-copyable draft per segment affected by
-	// the claim, ordered most-exposed first.
+	// Segments are the per-audience-segment recommendations: one tailored,
+	// individually-copyable draft per segment affected by the claim, ordered
+	// most-exposed first.
 	//
 	// Empty on a deployment whose AI service has not shipped segmentation yet,
 	// and on Synthetic claims, where the Prebunk draft is not segmented. The
@@ -214,7 +215,7 @@ type ActivityContent struct {
 	Segments []DebunkSegment `json:"segments"`
 }
 
-// DebunkSegment is one audience-segment-specific Debunk recommendation (US12).
+// DebunkSegment is one audience-segment-specific Debunk recommendation.
 type DebunkSegment struct {
 	Segment string `json:"segment"`
 	// Rationale is why this segment was identified — the framing or concern the
@@ -234,7 +235,7 @@ type ClaimReview struct {
 	ReviewedAt *time.Time `json:"reviewed_at"`
 }
 
-// ClaimDetail is the claim detail page payload (US12, US20).
+// ClaimDetail is the claim detail page payload.
 type ClaimDetail struct {
 	ID             string       `json:"id"`
 	ClaimType      string       `json:"claim_type"`
@@ -256,17 +257,17 @@ type ClaimDetail struct {
 	NegativeStatementCount *int64          `json:"negative_statement_count,omitempty"`
 	IsOnAlert              *bool           `json:"is_on_alert,omitempty"`
 
-	// CoordinatedNetwork is the US61 "Coordinated network detected" indicator.
+	// CoordinatedNetwork is the "Coordinated network detected" indicator.
 	// Omitted when nothing qualifies — no empty state.
 	//
-	// This is the point of F5 in daily use: it decides whether the team
-	// publicly rebuts a claim or refers it to the platform instead. Rebutting a
-	// claim that only 40 accounts are actually making hands it the reach it was
-	// engineered to obtain.
+	// This is the point of network detection in daily use: it decides whether
+	// the team publicly rebuts a claim or refers it to the platform instead.
+	// Rebutting a claim that only 40 accounts are actually making hands it the
+	// reach it was engineered to obtain.
 	CoordinatedNetwork *ClaimNetworkBadge `json:"coordinated_network,omitempty"`
 }
 
-// Statement is one source post backing a claim (US12).
+// Statement is one source post backing a claim.
 type Statement struct {
 	ID                    string    `json:"id"`
 	Text                  string    `json:"text"`
@@ -281,7 +282,8 @@ type Statement struct {
 	CreatedAt             time.Time `json:"created_at"`
 }
 
-// ClaimSection is one of the two F1 sections, S1 or S2.
+// ClaimSection is one of the Claim Repository Bank's two sections, S1
+// (Existing claims) or S2 (Non-Existing claims).
 //
 // Each section paginates independently: the caller picks its own page/limit
 // per section (S1 and S2 typically have very different pool sizes), so each
@@ -299,10 +301,10 @@ type ClaimSection struct {
 	Claims      []ClaimCard `json:"claims"`
 }
 
-// RepositoryResponse is the whole F1 Claim Repository Bank page in one call.
+// RepositoryResponse is the whole Claim Repository Bank page in one call.
 //
-// Both sections are always present regardless of the selected status tab: per
-// US1, the status filter narrows claims *within* each section and never hides a
+// Both sections are always present regardless of the selected status tab: the
+// status filter narrows claims *within* each section and never hides a
 // section entirely.
 type RepositoryResponse struct {
 	LastFetchedAt time.Time    `json:"last_fetched_at"`
@@ -327,8 +329,7 @@ type ClaimStatusResponse struct {
 	ReviewedBy   *string   `json:"reviewed_by"`
 }
 
-// ConfirmHarmRequest is the body of PUT /api/v1/claims/:id/harm/confirm
-// (Flow 4).
+// ConfirmHarmRequest is the body of PUT /api/v1/claims/:id/harm/confirm.
 //
 // Every field is optional: an omitted sub-score keeps the AI service's own
 // classification, and an empty body is the legitimate "I reviewed these and
@@ -340,7 +341,7 @@ type ConfirmHarmRequest struct {
 	PolicyDisruption   *float64 `json:"policy_disruption" validate:"omitempty,gte=0,lte=100"`
 }
 
-// ScorePoint is one bucket of the F3 score history chart.
+// ScorePoint is one bucket of the Alert page's score history chart.
 type ScorePoint struct {
 	BucketStart     time.Time `json:"bucket_start"`
 	FinalClaimScore *float64  `json:"final_claim_score"`

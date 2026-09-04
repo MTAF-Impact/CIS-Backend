@@ -14,7 +14,7 @@ import (
 	"github.com/cis/cis-backend/internal/service"
 )
 
-// SettingHandler serves the F4 Admin Settings page.
+// SettingHandler serves the Admin Settings page.
 type SettingHandler struct {
 	settings *service.SettingService
 }
@@ -38,7 +38,7 @@ func (h *SettingHandler) List(c *fiber.Ctx) error {
 	return response.OK(c, "settings", settings)
 }
 
-// GetAlertThreshold handles GET /api/v1/settings/alert-threshold (US32).
+// GetAlertThreshold handles GET /api/v1/settings/alert-threshold.
 func (h *SettingHandler) GetAlertThreshold(c *fiber.Ctx) error {
 	threshold, err := h.settings.AlertThresholdView(c.UserContext())
 	if err != nil {
@@ -47,10 +47,10 @@ func (h *SettingHandler) GetAlertThreshold(c *fiber.Ctx) error {
 	return response.OK(c, "alert threshold", threshold)
 }
 
-// UpdateAlertThreshold handles PUT /api/v1/settings/alert-threshold (US32).
+// UpdateAlertThreshold handles PUT /api/v1/settings/alert-threshold.
 //
 // The threshold is global: changing it immediately changes the Over/Under
-// Threshold status of every claim on F3.
+// Threshold status of every claim on the Alert page.
 func (h *SettingHandler) UpdateAlertThreshold(c *fiber.Ctx) error {
 	var req UpdateThresholdRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -67,12 +67,12 @@ func (h *SettingHandler) UpdateAlertThreshold(c *fiber.Ctx) error {
 	return response.OK(c, "alert threshold updated", threshold)
 }
 
-// SetCityRequest is the body of PUT /api/v1/settings/city (US65).
+// SetCityRequest is the body of PUT /api/v1/settings/city.
 type SetCityRequest struct {
 	City string `json:"city" validate:"required"`
 }
 
-// Cities handles GET /api/v1/settings/cities, the US65 dropdown options.
+// Cities handles GET /api/v1/settings/cities, the dropdown options.
 func (h *SettingHandler) Cities(c *fiber.Ctx) error {
 	return response.OK(c, "configurable cities", fiber.Map{
 		"cities":   models.IndonesianCities,
@@ -80,16 +80,17 @@ func (h *SettingHandler) Cities(c *fiber.Ctx) error {
 	})
 }
 
-// GetCity handles GET /api/v1/settings/city (US65).
+// GetCity handles GET /api/v1/settings/city.
 func (h *SettingHandler) GetCity(c *fiber.Ctx) error {
 	return response.OK(c, "monitored city", h.settings.MonitoredCity(c.UserContext()))
 }
 
-// SetCity handles PUT /api/v1/settings/city (US65).
+// SetCity handles PUT /api/v1/settings/city.
 //
 // Single-select: the new city replaces the previous one outright, since this
-// phase has no concurrent multi-city state. Every F6 metric re-scopes on the
-// next request, and the F5 report footer picks up the new city-local timezone.
+// phase has no concurrent multi-city state. Every Overview metric re-scopes
+// on the next request, and the report footer picks up the new city-local
+// timezone.
 func (h *SettingHandler) SetCity(c *fiber.Ctx) error {
 	var req SetCityRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -110,9 +111,9 @@ func (h *SettingHandler) SetCity(c *fiber.Ctx) error {
 //
 // The whole dynamic-parameter surface in one call: two tiers, the sections
 // inside them, and every parameter's definition alongside its current value.
-// F4 renders its form from this rather than from a second copy of the
-// specification, which is what stops a bound in the form and the bound the
-// server enforces from drifting apart.
+// The Admin Settings form renders from this rather than from a second copy
+// of the specification, which is what stops a bound in the form and the
+// bound the server enforces from drifting apart.
 func (h *SettingHandler) Parameters(c *fiber.Ctx) error {
 	return response.OK(c, "configurable parameters", h.settings.ConfigCatalog(c.UserContext()))
 }
@@ -164,7 +165,7 @@ func (h *SettingHandler) ResetParameter(c *fiber.Ctx) error {
 	return response.OK(c, "parameter reset to its default", h.settings.ConfigCatalog(c.UserContext()))
 }
 
-// AdminHandler serves the F4 MVP test utilities.
+// AdminHandler serves the MVP test utilities.
 type AdminHandler struct {
 	admin  *service.AdminService
 	alerts *service.AlertService
@@ -180,8 +181,7 @@ type GenerateGenericClaimRequest struct {
 	TopicID *string `json:"topic_id" validate:"omitempty,uuid"`
 }
 
-// GenerateGenericClaim handles POST /api/v1/admin/generate-generic-claim
-// (US33).
+// GenerateGenericClaim handles POST /api/v1/admin/generate-generic-claim.
 func (h *AdminHandler) GenerateGenericClaim(c *fiber.Ctx) error {
 	var req GenerateGenericClaimRequest
 	// The body is optional, so a parse failure on an empty body is not fatal.
@@ -210,7 +210,7 @@ func (h *AdminHandler) GenerateGenericClaim(c *fiber.Ctx) error {
 }
 
 // SnapshotScores handles POST /api/v1/admin/snapshot-scores, a manual trigger
-// for the job that builds the F3 chart history.
+// for the job that builds the Alert page's chart history.
 func (h *AdminHandler) SnapshotScores(c *fiber.Ctx) error {
 	count, err := h.alerts.CaptureSnapshots(c.UserContext())
 	if err != nil {
@@ -228,8 +228,7 @@ type GenerateSampleContentRequest struct {
 	AutoCluster *bool   `json:"auto_cluster"`
 }
 
-// GenerateSampleContent handles POST /api/v1/admin/generate-sample-content
-// (Flow 6).
+// GenerateSampleContent handles POST /api/v1/admin/generate-sample-content.
 //
 // Long-running: with auto_cluster left at its default the AI service clusters
 // synchronously before replying, so this runs on AI_SERVICE_LONG_TIMEOUT.
@@ -267,7 +266,7 @@ func (h *AdminHandler) ClusterNow(c *fiber.Ctx) error {
 }
 
 // Rescore handles POST /api/v1/admin/rescore, the manual trigger for the
-// time-based score re-evaluation the snapshot cron also runs (Flow 5).
+// time-based score re-evaluation the snapshot cron also runs.
 func (h *AdminHandler) Rescore(c *fiber.Ctx) error {
 	res, err := h.admin.Rescore(c.UserContext())
 	if err != nil {

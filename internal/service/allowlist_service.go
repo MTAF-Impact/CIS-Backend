@@ -14,21 +14,20 @@ import (
 	"github.com/cis/cis-backend/internal/repository"
 )
 
-// AllowlistService owns the declared-coordination allowlist (US56, US63) and
-// the common-phrase exclusion list (PRD 10.5.2.2).
+// AllowlistService owns the declared-coordination allowlist and the
+// common-phrase exclusion list.
 //
-// # Why this is the most important service in F5
+// # Why this is the most important service in the detector
 //
-// The PRD calls the allowlist product-critical and says why: NGOs, newsrooms,
-// unions and grassroots campaigns coordinate openly and by design. A climate
-// campaign posting a shared message at a shared time is doing exactly what
-// campaigns do. Without this control the detector systematically flags civil
-// society — which, for a tool operated by a government, is the platform's most
-// serious failure mode.
+// NGOs, newsrooms, unions and grassroots campaigns coordinate openly and by
+// design. A climate campaign posting a shared message at a shared time is
+// doing exactly what campaigns do. Without this control the detector
+// systematically flags civil society — which, for a tool operated by a
+// government, is the platform's most serious failure mode.
 //
-// It is also why US63 says the list should be seeded during onboarding with the
-// city's known civil-society partners, "before the first detection run, not
-// after the first false positive". Building it late means the first thing the
+// It is also why the list should be seeded during onboarding with the city's
+// known civil-society partners, before the first detection run rather than
+// after the first false positive. Building it late means the first thing the
 // tool does in production is accuse an NGO.
 type AllowlistService struct {
 	allowlist *repository.AllowlistRepository
@@ -45,7 +44,7 @@ func NewAllowlistService(
 	return &AllowlistService{allowlist: allowlist, networks: networks, reports: reports}
 }
 
-// ListQuery is the normalized input for the US63 management screen.
+// ListQuery is the normalized input for the allowlist management screen.
 type ListAllowlistQuery struct {
 	Search         string
 	Platform       string
@@ -55,7 +54,7 @@ type ListAllowlistQuery struct {
 	Limit          int
 }
 
-// List returns a page of allowlist entries (US63).
+// List returns a page of allowlist entries.
 func (s *AllowlistService) List(
 	ctx context.Context, q ListAllowlistQuery,
 ) ([]dto.AllowlistEntry, int64, dto.PageParams, error) {
@@ -85,8 +84,8 @@ func (s *AllowlistService) List(
 	return out, total, page, nil
 }
 
-// Categories returns the active count per category, so the US63 screen can show
-// at a glance whether the list was ever seeded.
+// Categories returns the active count per category, so the management screen
+// can show at a glance whether the list was ever seeded.
 func (s *AllowlistService) Categories(ctx context.Context) (map[string]int64, error) {
 	counts, err := s.allowlist.CountByCategory(ctx)
 	if err != nil {
@@ -95,8 +94,8 @@ func (s *AllowlistService) Categories(ctx context.Context) (map[string]int64, er
 	return counts, nil
 }
 
-// SelfExclusionCount is how many accounts are excluded as the city's own comms
-// estate (PRD 10.5.1, US62).
+// SelfExclusionCount is how many accounts are excluded as the city's own
+// comms estate.
 func (s *AllowlistService) SelfExclusionCount(ctx context.Context) int64 {
 	counts, err := s.allowlist.CountByCategory(ctx)
 	if err != nil {
@@ -105,7 +104,7 @@ func (s *AllowlistService) SelfExclusionCount(ctx context.Context) int64 {
 	return counts[models.AllowlistCategorySelfExclusion]
 }
 
-// Create adds one account manually from F4 (US63).
+// Create adds one account manually from the admin settings screen.
 func (s *AllowlistService) Create(
 	ctx context.Context, req dto.CreateAllowlistEntryRequest, addedBy *uuid.UUID,
 ) (*dto.AllowlistActionResult, error) {
@@ -135,7 +134,7 @@ func (s *AllowlistService) Create(
 	}})
 }
 
-// AllowlistAccount marks a single account as legitimate coordination (US56).
+// AllowlistAccount marks a single account as legitimate coordination.
 func (s *AllowlistService) AllowlistAccount(
 	ctx context.Context, accountID uuid.UUID, req dto.AddAllowlistRequest, addedBy *uuid.UUID,
 ) (*dto.AllowlistActionResult, error) {
@@ -149,8 +148,7 @@ func (s *AllowlistService) AllowlistAccount(
 	return s.allowlistKeys(ctx, []repository.PlatformAccountKey{*key}, req, addedBy)
 }
 
-// AllowlistNetwork marks every member of a network as legitimate coordination
-// (US56).
+// AllowlistNetwork marks every member of a network as legitimate coordination.
 //
 // This is the action taken when an analyst recognises that what the detector
 // found is a real campaign the city knows about. It protects the whole set at
@@ -200,9 +198,9 @@ func (s *AllowlistService) allowlistKeys(
 //
 // # The part that cannot be undone
 //
-// US56 says allowlisted accounts are excluded from all future candidate sets
-// and their historical networks are "suppressed and relabelled". Suppression
-// and relabelling are the pipeline's to apply — those columns are on AI-owned
+// Allowlisted accounts are excluded from all future candidate sets and their
+// historical networks are suppressed and relabelled. Suppression and
+// relabelling are the pipeline's to apply — those columns are on AI-owned
 // tables — so what this backend can do is name the blast radius: which networks
 // contained these accounts, and which of those a report was already generated
 // from.
@@ -211,7 +209,7 @@ func (s *AllowlistService) allowlistKeys(
 // allowlisted is already in someone's inbox and cannot be recalled. Surfacing it
 // is the most the system can do, and saying nothing would leave the team
 // unaware that a referral they sent names an organisation they have since
-// declared legitimate. See PRD-v1.4.md open question 9.
+// declared legitimate.
 func (s *AllowlistService) summarise(
 	ctx context.Context, added int, keys []repository.PlatformAccountKey,
 ) (*dto.AllowlistActionResult, error) {
@@ -263,7 +261,7 @@ func (s *AllowlistService) summarise(
 	return result, nil
 }
 
-// Update edits an active entry (US63).
+// Update edits an active entry.
 func (s *AllowlistService) Update(
 	ctx context.Context, id uuid.UUID, req dto.UpdateAllowlistEntryRequest, updatedBy *uuid.UUID,
 ) (*dto.AllowlistEntry, error) {
@@ -298,7 +296,7 @@ func (s *AllowlistService) Update(
 	return &entry, nil
 }
 
-// Remove withdraws an account's protection (US63).
+// Remove withdraws an account's protection.
 //
 // Soft delete with a mandatory reason. Removing an organisation's protection is
 // the action that lets the detector flag it again, so it is the change most
@@ -308,7 +306,7 @@ func (s *AllowlistService) Remove(
 ) (*dto.AllowlistEntry, error) {
 	reason := strings.TrimSpace(req.Reason)
 	if reason == "" {
-		return nil, apperr.Unprocessable("a reason is required to remove an allowlist entry (US63)")
+		return nil, apperr.Unprocessable("a reason is required to remove an allowlist entry")
 	}
 
 	if err := s.allowlist.Remove(ctx, id, reason, removedBy); err != nil {
@@ -350,7 +348,7 @@ func toAllowlistEntry(r models.CISCoordinationAllowlist) dto.AllowlistEntry {
 	return entry
 }
 
-// --- Common-phrase allowlist (PRD 10.5.2.2) ---
+// --- Common-phrase allowlist ---
 
 // ListPhrases returns a page of the text exclusion list.
 func (s *AllowlistService) ListPhrases(
@@ -376,7 +374,7 @@ func (s *AllowlistService) ListPhrases(
 	return out, total, window, nil
 }
 
-// AddPhrase adds text the duplication signal must ignore (PRD 10.5.2.2).
+// AddPhrase adds text the duplication signal must ignore.
 //
 // Without this list, residents quoting the same government announcement
 // register as content duplication — the textbook false positive the whole
@@ -425,7 +423,7 @@ type ExclusionsForPipeline struct {
 	Phrases  []string                        `json:"phrases"`
 }
 
-// Exclusions returns the lists the pipeline consumes (PRD 10.5.1, 10.5.2.2).
+// Exclusions returns the lists the pipeline consumes.
 func (s *AllowlistService) Exclusions(ctx context.Context) (*ExclusionsForPipeline, error) {
 	accounts, err := s.allowlist.ActiveKeys(ctx)
 	if err != nil {

@@ -24,24 +24,23 @@ import (
 // change it here and update docs/AI-INTEGRATION.md's endpoint table in the same
 // commit.
 const (
-	// pathMatchmaking announces a newly uploaded policy (Flow 1, US42).
-	// Acked in milliseconds; the work happens in the AI service's background.
+	// pathMatchmaking announces a newly uploaded policy so the AI service can
+	// correlate it against claims. Acked in milliseconds; the work happens in
+	// the AI service's background.
 	pathMatchmaking = "/api/v1/matchmaking/policies"
 
-	// pathGenerateClaim inserts one fully-populated Existing claim for demos
-	// (Flow 3, US33).
+	// pathGenerateClaim inserts one fully-populated Existing claim for demos.
 	pathGenerateClaim = "/api/v1/claims/generate-generic"
 
-	// pathRescore re-evaluates every claim's score against the wall clock
-	// (Flow 5). Called hourly, ahead of the snapshot capture.
+	// pathRescore re-evaluates every claim's score against the wall clock.
+	// Called hourly, ahead of the snapshot capture.
 	pathRescore = "/api/v1/claims/rescore"
 
-	// pathClusterNow forces a clustering pass over unclustered content
-	// (Flow 6b).
+	// pathClusterNow forces a clustering pass over unclustered content.
 	pathClusterNow = "/api/v1/claims/cluster-now"
 
-	// pathGenerateContent fabricates sample content items (Flow 6). The
-	// stand-in for a live crawler.
+	// pathGenerateContent fabricates sample content items. The stand-in for a
+	// live crawler.
 	pathGenerateContent = "/api/v1/ingest/generate-synthetic"
 
 	// pathHealth is the AI service's liveness probe, used by /health/ready to
@@ -49,8 +48,8 @@ const (
 	pathHealth = "/health"
 )
 
-// harmConfirmPath is the one path with a parameter in it: a reviewer's override
-// of a claim's harm sub-scores (Flow 4).
+// harmConfirmPath is the one path with a parameter in it: a reviewer's
+// override of a claim's harm sub-scores.
 func harmConfirmPath(claimID uuid.UUID) string {
 	return fmt.Sprintf("/api/v1/claims/%s/harm/confirm", claimID)
 }

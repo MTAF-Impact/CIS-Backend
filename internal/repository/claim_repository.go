@@ -34,15 +34,14 @@ type ClaimRow struct {
 	models.AIClaim `gorm:"embedded"`
 	ReviewStatus   string  `gorm:"column:review_status"`
 	TopicName      *string `gorm:"column:topic_name"`
-	// Review overlay fields, populated only by FindClaimByID (US10/US18 cards
-	// never need to read these back, only the detail page does).
+	// Review overlay fields, populated only by FindClaimByID: claim cards
+	// never need to read these back, only the detail page does.
 	ReviewNotes *string    `gorm:"column:review_notes"`
 	ReviewedBy  *uuid.UUID `gorm:"column:reviewed_by"`
 	ReviewedAt  *time.Time `gorm:"column:reviewed_at"`
 }
 
-// ClaimFilter describes the F1 list/search query (US1, US6, US7, US11, US15,
-// US16, US19).
+// ClaimFilter describes the Claim Repository Bank's list/search query.
 type ClaimFilter struct {
 	// ClaimType is the canonical type, models.ClaimTypeExisting or
 	// models.ClaimTypeNonExisting. Empty means both.
@@ -52,18 +51,18 @@ type ClaimFilter struct {
 	TopicIDs     []uuid.UUID
 	Search       string
 	// PolicyIDs restricts to claims correlated with these AI policy ids, used
-	// by the F2 detail page (US39).
+	// by the policy detail page.
 	PolicyIDs []uuid.UUID
-	// SortBy is "score" (US7) or "created_at" (US16).
+	// SortBy is "score" or "created_at".
 	SortBy string
 	Limit  int
 	Offset int
 }
 
 const (
-	// SortByScore ranks by FinalClaimScore descending (US7).
+	// SortByScore ranks by FinalClaimScore descending.
 	SortByScore = "score"
-	// SortByCreatedAt ranks by newest first (US16).
+	// SortByCreatedAt ranks by newest first.
 	SortByCreatedAt = "created_at"
 )
 
@@ -92,8 +91,8 @@ func (r *ClaimRepository) baseQuery(ctx context.Context, f ClaimFilter) *gorm.DB
 	}
 	if len(f.PolicyIDs) > 0 {
 		// A claim relates to a policy either through the many-to-many join
-		// table (Existing claims, US12) or through claims.policy_id
-		// (Non-Existing claims, US20).
+		// table (Existing claims) or through claims.policy_id (Non-Existing
+		// claims).
 		q = q.Where(
 			"(c.policy_id IN ? OR EXISTS (SELECT 1 FROM claim_policies cp WHERE cp.claim_id = c.id AND cp.policy_id IN ?))",
 			f.PolicyIDs, f.PolicyIDs,
@@ -156,8 +155,8 @@ func (r *ClaimRepository) FindClaimByID(ctx context.Context, id uuid.UUID) (*Cla
 }
 
 // ClaimExists reports whether a claim id is present, and returns its raw
-// claim_type so callers can enforce type-specific rules (e.g. US26, which bars
-// Synthetic claims from the Alert page).
+// claim_type so callers can enforce type-specific rules, such as barring
+// Synthetic claims from the Alert page.
 func (r *ClaimRepository) ClaimExists(ctx context.Context, id uuid.UUID) (bool, string, error) {
 	var result struct {
 		ClaimType string `gorm:"column:claim_type"`
@@ -187,8 +186,8 @@ type StanceCount struct {
 // CountStatementsByClaim tallies supporting and opposing content for a set of
 // claims in a single query, avoiding an N+1 across a card list.
 //
-// Positive = supporting, Negative = opposing (US12). Neutral content is
-// excluded from both, mirroring PRD 6.4.2.
+// Positive = supporting, Negative = opposing. Neutral content is excluded
+// from both.
 func (r *ClaimRepository) CountStatementsByClaim(ctx context.Context, claimIDs []uuid.UUID) (map[uuid.UUID]StanceCount, error) {
 	out := make(map[uuid.UUID]StanceCount, len(claimIDs))
 	if len(claimIDs) == 0 {
@@ -238,17 +237,17 @@ func (r *ClaimRepository) ListStatements(ctx context.Context, claimID uuid.UUID,
 	return items, total, nil
 }
 
-// TopAccount is one row of the US12 Top 5 Accounts panel.
+// TopAccount is one row of the Top 5 Accounts panel.
 type TopAccount struct {
 	AuthorID         string `gorm:"column:author_id"`
 	ContentCount     int64  `gorm:"column:content_count"`
 	TotalImpressions int64  `gorm:"column:total_impressions"`
 }
 
-// ListTopAccounts returns the accounts driving a claim's spread (US12).
+// ListTopAccounts returns the accounts driving a claim's spread.
 //
-// Scoped to Supporting-side content only, matching the Reach parameter's scope
-// in PRD 6.1.1, and ranked by contributed impressions with post count as the
+// Scoped to Supporting-side content only, matching the Reach parameter's
+// scope, and ranked by contributed impressions with post count as the
 // tiebreaker.
 func (r *ClaimRepository) ListTopAccounts(ctx context.Context, claimID uuid.UUID, limit int) ([]TopAccount, error) {
 	var rows []TopAccount
@@ -269,8 +268,8 @@ func (r *ClaimRepository) ListTopAccounts(ctx context.Context, claimID uuid.UUID
 }
 
 // ListPolicyIDsForClaim resolves the AI policy ids correlated with a claim,
-// covering both the many-to-many join (US12) and the single policy_id column
-// used by Synthetic claims (US20).
+// covering both the many-to-many join and the single policy_id column used by
+// Synthetic claims.
 func (r *ClaimRepository) ListPolicyIDsForClaim(ctx context.Context, claimID uuid.UUID, directPolicyID *uuid.UUID) ([]uuid.UUID, error) {
 	var joined []uuid.UUID
 	err := r.db.WithContext(ctx).
@@ -343,10 +342,10 @@ func (r *ClaimRepository) UpsertReview(ctx context.Context, claimID uuid.UUID, s
 }
 
 // ListDebunkSegments returns a claim's per-audience-segment Debunk
-// recommendations, highest-priority segment first (PRD v1.5, US12).
+// recommendations, highest-priority segment first.
 //
 // Best-effort by design. claim_debunk_segments is AI-owned and only exists once
-// the AI service has shipped its v1.5 generation step; until then the detail
+// the AI service has shipped its segmentation feature; until then the detail
 // page falls back to the single cached draft in claims.activity_content, which
 // is a degraded page rather than a broken one.
 func (r *ClaimRepository) ListDebunkSegments(ctx context.Context, claimID uuid.UUID) ([]models.AIClaimDebunkSegment, error) {
@@ -364,8 +363,7 @@ func (r *ClaimRepository) ListDebunkSegments(ctx context.Context, claimID uuid.U
 	return segments, nil
 }
 
-// RecordHarmEdit appends the audit row behind a Harm sub-score override
-// (PRD v1.5, US23).
+// RecordHarmEdit appends the audit row behind a Harm sub-score override.
 func (r *ClaimRepository) RecordHarmEdit(ctx context.Context, edit *models.CISClaimHarmEdit) error {
 	return r.db.WithContext(ctx).Create(edit).Error
 }
@@ -387,7 +385,7 @@ func (r *ClaimRepository) LatestHarmEdit(ctx context.Context, claimID uuid.UUID)
 	return &edit, nil
 }
 
-// ListTopics returns every topic for the F1 filter chips (US6, US15).
+// ListTopics returns every topic for the Claim Repository Bank's filter chips.
 func (r *ClaimRepository) ListTopics(ctx context.Context) ([]models.AITopic, error) {
 	var topics []models.AITopic
 	err := r.db.WithContext(ctx).Order("name ASC").Find(&topics).Error

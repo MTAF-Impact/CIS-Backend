@@ -20,7 +20,7 @@ import (
 	"github.com/cis/cis-backend/internal/storage"
 )
 
-// PolicyService serves F2, the Public Policy Bank.
+// PolicyService serves the Public Policy Bank.
 //
 // It owns cis_policies outright. It never inserts into the AI service's
 // `policies` table — the AI service creates its own record during matchmaking
@@ -29,12 +29,11 @@ type PolicyService struct {
 	policies *repository.PolicyRepository
 	claims   *repository.ClaimRepository
 	alerts   *repository.AlertRepository
-	// networks resolves the US61 indicator for the claim cards on the policy
-	// detail page. US10 is explicit that the icon is part of the shared card
-	// component and therefore appears here too; since this service assembles
-	// its own cards rather than calling ClaimService, wiring only that one
-	// would ship the icon on F1 and silently drop it on F2 — the
-	// policy-specific variant US39 forbids.
+	// networks resolves the coordinated-network indicator for the claim cards
+	// on the policy detail page. The icon is part of the shared card component,
+	// so it must appear here too; since this service assembles its own cards
+	// rather than calling ClaimService, wiring only that one component would
+	// ship the icon elsewhere and silently drop it here.
 	networks *repository.NetworkRepository
 	store    storage.Storage
 	ai       *aiclient.Client
@@ -57,7 +56,7 @@ func NewPolicyService(
 	}
 }
 
-// ListPoliciesQuery is the normalized F2 list input.
+// ListPoliciesQuery is the normalized policy list input.
 type ListPoliciesQuery struct {
 	Years  []int
 	Search string
@@ -66,7 +65,7 @@ type ListPoliciesQuery struct {
 	Limit  int
 }
 
-// List returns a page of policy cards ordered per US35.
+// List returns a page of policy cards.
 func (s *PolicyService) List(ctx context.Context, q ListPoliciesQuery) ([]dto.PolicyCard, int64, dto.PageParams, error) {
 	page := dto.NormalizePage(q.Page, q.Limit)
 
@@ -88,7 +87,7 @@ func (s *PolicyService) List(ctx context.Context, q ListPoliciesQuery) ([]dto.Po
 	return cards, total, page, nil
 }
 
-// Years returns the distinct rolled-out years for the US34 filter chips.
+// Years returns the distinct rolled-out years for the filter chips.
 func (s *PolicyService) Years(ctx context.Context) (*dto.PolicyYearsResponse, error) {
 	years, err := s.policies.ListYears(ctx)
 	if err != nil {
@@ -100,7 +99,7 @@ func (s *PolicyService) Years(ctx context.Context) (*dto.PolicyYearsResponse, er
 	return &dto.PolicyYearsResponse{Years: years}, nil
 }
 
-// Detail returns a policy with its correlated claim lists (US39).
+// Detail returns a policy with its correlated claim lists.
 func (s *PolicyService) Detail(ctx context.Context, id uuid.UUID) (*dto.PolicyDetail, error) {
 	row, err := s.policies.FindByID(ctx, id)
 	if err != nil {
@@ -138,10 +137,11 @@ func (s *PolicyService) Detail(ctx context.Context, id uuid.UUID) (*dto.PolicyDe
 	return detail, nil
 }
 
-// claimsForPolicy loads one side of the US39 claim lists.
+// claimsForPolicy loads one side of a policy's correlated claim lists.
 //
-// The cards are built with the same shape as F1's so the frontend can reuse the
-// identical component, including the bell-icon state for Existing claims.
+// The cards are built with the same shape as the claim feed's so the frontend
+// can reuse the identical component, including the bell-icon state for
+// Existing claims.
 func (s *PolicyService) claimsForPolicy(ctx context.Context, aiPolicyID uuid.UUID, claimType string) ([]dto.ClaimCard, error) {
 	sortBy := repository.SortByScore
 	if claimType == models.ClaimTypeNonExisting {
@@ -198,8 +198,7 @@ type CreatePolicyInput struct {
 }
 
 // Create registers a policy: stores the document, derives its rollout status,
-// persists the record, and kicks off AI matchmaking in the background
-// (US40, US41, US42).
+// persists the record, and kicks off AI matchmaking in the background.
 func (s *PolicyService) Create(ctx context.Context, in CreatePolicyInput) (*dto.PolicyCard, error) {
 	policyID := uuid.New()
 	objectPath := storage.BuildObjectPath(policyID, in.FileName)
@@ -220,11 +219,10 @@ func (s *PolicyService) Create(ctx context.Context, in CreatePolicyInput) (*dto.
 		Name:          in.Name,
 		Description:   in.Description,
 		RolledOutDate: in.RolledOutDate,
-		// US41: the status a new policy starts on is derived from its date, so
-		// the common case needs no second step. It is only a starting value —
-		// from here it moves when somebody moves it (PUT /policies/:id/status),
-		// not on a clock.
-		// the user, and re-evaluated daily by the cron job.
+		// The status a new policy starts on is derived from its date, so the
+		// common case needs no second step. It is only a starting value — from
+		// here it moves when somebody moves it (PUT /policies/:id/status), never
+		// automatically.
 		Status:        models.DeriveStatus(in.RolledOutDate, now),
 		FileName:      in.FileName,
 		FilePath:      object.Path,
@@ -262,7 +260,7 @@ func (s *PolicyService) Create(ctx context.Context, in CreatePolicyInput) (*dto.
 	return &card, nil
 }
 
-// startMatchmaking runs the US42 handoff in the background.
+// startMatchmaking runs the AI matchmaking handoff in the background.
 //
 // The upload response must not block on the AI service, which is exactly why
 // the card shows a "Processing" badge until this finishes.
@@ -379,7 +377,7 @@ func (s *PolicyService) Rematch(ctx context.Context, id uuid.UUID) (*dto.PolicyP
 	return s.ProcessingStatus(ctx, id)
 }
 
-// ApplyMatchmakingResult records the AI service's callback (US42).
+// ApplyMatchmakingResult records the AI service's callback.
 func (s *PolicyService) ApplyMatchmakingResult(ctx context.Context, id uuid.UUID, req dto.MatchmakingResultRequest) (*dto.PolicyProcessingStatus, error) {
 	if _, err := s.policies.FindByID(ctx, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -417,7 +415,7 @@ func (s *PolicyService) ApplyMatchmakingResult(ctx context.Context, id uuid.UUID
 	return s.ProcessingStatus(ctx, id)
 }
 
-// ProcessingStatus returns the badge state the F2 card polls (US42).
+// ProcessingStatus returns the badge state the policy card polls.
 func (s *PolicyService) ProcessingStatus(ctx context.Context, id uuid.UUID) (*dto.PolicyProcessingStatus, error) {
 	row, err := s.policies.FindByID(ctx, id)
 	if err != nil {
@@ -443,7 +441,7 @@ func (s *PolicyService) ProcessingStatus(ctx context.Context, id uuid.UUID) (*dt
 	return status, nil
 }
 
-// Update applies an edit to a policy's metadata (US41).
+// Update applies an edit to a policy's metadata.
 //
 // Editing the date does NOT move the status. The two were coupled while a
 // nightly job owned the transition; now that the rollout is a human decision,
@@ -598,8 +596,8 @@ func (s *PolicyService) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// Download resolves how to fetch a policy document (US37). It prefers a signed
-// URL and falls back to streaming when the driver cannot sign.
+// Download resolves how to fetch a policy document. It prefers a signed URL
+// and falls back to streaming when the driver cannot sign.
 func (s *PolicyService) Download(ctx context.Context, id uuid.UUID) (*dto.DownloadResponse, io.ReadCloser, error) {
 	row, err := s.policies.FindByID(ctx, id)
 	if err != nil {
@@ -636,7 +634,7 @@ func (s *PolicyService) Download(ctx context.Context, id uuid.UUID) (*dto.Downlo
 	return meta, body, nil
 }
 
-// SetStatus records an operator's rollout decision for one policy (US41).
+// SetStatus records an operator's rollout decision for one policy.
 //
 // # Why this is a human action and not a scheduled one
 //
@@ -690,7 +688,7 @@ func normalizeRolloutStatus(status string) (string, error) {
 //
 // Two failure shapes are picked up. A job that failed outright leaves
 // processing_status="failed" and is obviously retryable. The harder one is a
-// lost Flow 2 callback: the AI service acked, the backend recorded
+// lost matchmaking-result callback: the AI service acked, the backend recorded
 // "processing", and the result never arrived — the AI service's callback is
 // best-effort and it never retries. Without a staleness sweep such a policy
 // sits at "processing" with a null ai_policy_id forever, spinning its badge and
@@ -719,7 +717,7 @@ func (s *PolicyService) RetryStuckMatchmaking(ctx context.Context) (int, error) 
 	return len(stuck), nil
 }
 
-// isProcessing reports whether the F2 "Processing" badge should be shown.
+// isProcessing reports whether the "Processing" badge should be shown.
 func isProcessing(status string) bool {
 	return status == models.ProcessingPending || status == models.ProcessingInProgress
 }

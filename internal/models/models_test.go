@@ -40,7 +40,7 @@ func TestDeriveStatus(t *testing.T) {
 		wantStatus string
 	}{
 		{"past date is rolled out", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), PolicyStatusRolledOut},
-		// US41: "on or before the current date" makes today inclusive.
+		// "On or before the current date" makes today inclusive.
 		{"today is rolled out", time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC), PolicyStatusRolledOut},
 		{"tomorrow is not rolled out", time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC), PolicyStatusNotRolledOut},
 		{"future date is not rolled out", time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC), PolicyStatusNotRolledOut},
@@ -56,7 +56,7 @@ func TestDeriveStatus(t *testing.T) {
 }
 
 func TestIsValidReviewStatus(t *testing.T) {
-	// v1.3 merged Prebunk and Debunk into the single shared Action Taken
+	// Prebunk and Debunk were merged into the single shared Action Taken
 	// status, so exactly these four are valid.
 	for _, s := range []string{"unreviewed", "active", "inactive", "action_taken"} {
 		if !IsValidReviewStatus(s) {

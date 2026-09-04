@@ -11,7 +11,7 @@ import (
 	"github.com/cis/cis-backend/internal/service"
 )
 
-// AlertHandler serves F3, the Alert page.
+// AlertHandler serves the Alert page.
 type AlertHandler struct {
 	alerts *service.AlertService
 }
@@ -21,7 +21,7 @@ func NewAlertHandler(alerts *service.AlertService) *AlertHandler {
 	return &AlertHandler{alerts: alerts}
 }
 
-// List handles GET /api/v1/alerts, the [C3] watchlist table.
+// List handles GET /api/v1/alerts, the watchlist table.
 func (h *AlertHandler) List(c *fiber.Ctx) error {
 	rows, total, page, err := h.alerts.List(
 		c.UserContext(), middleware.UserIDFromContext(c), c.Query("q"),
@@ -33,7 +33,7 @@ func (h *AlertHandler) List(c *fiber.Ctx) error {
 	return response.List(c, "alert watchlist", rows, response.NewMeta(page.Page, page.Limit, total))
 }
 
-// Notifications handles GET /api/v1/alerts/notifications, the US71 sidebar
+// Notifications handles GET /api/v1/alerts/notifications, the sidebar
 // counter badge.
 func (h *AlertHandler) Notifications(c *fiber.Ctx) error {
 	res, err := h.alerts.Notifications(c.UserContext(), middleware.UserIDFromContext(c))
@@ -45,7 +45,7 @@ func (h *AlertHandler) Notifications(c *fiber.Ctx) error {
 
 // Acknowledge handles POST /api/v1/alerts/notifications/acknowledge.
 //
-// US71 clears the counter and the row highlights when the user opens F3, so the
+// Opening the Alert page clears the counter and the row highlights, so the
 // frontend calls this on entering the page — after it has rendered the rows it
 // was given, since acknowledging is what makes the next render unhighlighted.
 func (h *AlertHandler) Acknowledge(c *fiber.Ctx) error {
@@ -57,7 +57,7 @@ func (h *AlertHandler) Acknowledge(c *fiber.Ctx) error {
 }
 
 // Add handles POST /api/v1/alerts, called after the user confirms the bell
-// dialog on an F1 card (US14).
+// dialog on a claim card.
 func (h *AlertHandler) Add(c *fiber.Ctx) error {
 	var req dto.AddAlertRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -79,7 +79,7 @@ func (h *AlertHandler) Add(c *fiber.Ctx) error {
 	return response.Created(c, "claim added to the alert watchlist", res)
 }
 
-// Remove handles DELETE /api/v1/alerts/:claimId (US14).
+// Remove handles DELETE /api/v1/alerts/:claimId.
 func (h *AlertHandler) Remove(c *fiber.Ctx) error {
 	claimID, err := parsePathUUID(c, "claimId")
 	if err != nil {
@@ -93,7 +93,7 @@ func (h *AlertHandler) Remove(c *fiber.Ctx) error {
 	return response.OK(c, "claim removed from the alert watchlist", res)
 }
 
-// SetChartVisibility handles PATCH /api/v1/alerts/:claimId/chart (US28).
+// SetChartVisibility handles PATCH /api/v1/alerts/:claimId/chart.
 func (h *AlertHandler) SetChartVisibility(c *fiber.Ctx) error {
 	claimID, err := parsePathUUID(c, "claimId")
 	if err != nil {
@@ -115,7 +115,7 @@ func (h *AlertHandler) SetChartVisibility(c *fiber.Ctx) error {
 	return response.OK(c, "chart visibility updated", res)
 }
 
-// Chart handles GET /api/v1/alerts/chart, the [C1] line chart and [C2] key.
+// Chart handles GET /api/v1/alerts/chart, the line chart and its key.
 func (h *AlertHandler) Chart(c *fiber.Ctx) error {
 	from, err := parseOptionalTime(c.Query("from"))
 	if err != nil {

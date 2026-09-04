@@ -7,8 +7,8 @@ import (
 )
 
 // The registry is the single source for the seed, the write-path validation and
-// the F4 catalog. A mistake in it therefore shows up as a form that accepts a
-// value the server rejects, or as a seeded default the validator would refuse —
+// the settings catalog. A mistake in it therefore shows up as a form that accepts
+// a value the server rejects, or as a seeded default the validator would refuse —
 // which is exactly what these tests rule out.
 
 func TestEveryParamHasAValidDefault(t *testing.T) {
@@ -34,7 +34,7 @@ func TestSectionsAreDeclared(t *testing.T) {
 	for _, p := range ConfigParams {
 		tier, ok := declared[p.Section]
 		if !ok {
-			t.Errorf("%q: section %q is not in ConfigSections, so F4 would never render it",
+			t.Errorf("%q: section %q is not in ConfigSections, so the settings page would never render it",
 				p.Key, p.Section)
 			continue
 		}
@@ -89,9 +89,9 @@ func TestSumGroupsAreEnforced(t *testing.T) {
 	}
 }
 
-// TestPolicyDisruptionCeilingIsEnforced covers PRD 6.2.4's bias guardrail. It is
-// a hard cap rather than a recommendation precisely because the pressure to
-// raise it arrives with a reason attached.
+// TestPolicyDisruptionCeilingIsEnforced covers the bias guardrail: it is a hard
+// cap rather than a recommendation precisely because the pressure to raise it
+// arrives with a reason attached.
 func TestPolicyDisruptionCeilingIsEnforced(t *testing.T) {
 	param, ok := FindConfigParam(SettingHarmWeightPolicyDisruption)
 	if !ok {
@@ -174,9 +174,10 @@ func TestPartialSetsAreNotFalselyRejected(t *testing.T) {
 	}
 }
 
-// TestParamIDsAreUnique keeps the AP-xx trace back to the Admin Configurable
-// Parameters specification honest. AP-12 is deliberately shared: the z-score
-// reference range is one row there and two bounded inputs here.
+// TestParamIDsAreUnique keeps each parameter's tracking code pointing at a
+// single row. AP-12 is deliberately shared: the velocity z-score reference
+// range is one conceptual value but needs two independent bounds (a floor and
+// a ceiling) here.
 func TestParamIDsAreUnique(t *testing.T) {
 	shared := map[string]bool{"AP-12": true}
 

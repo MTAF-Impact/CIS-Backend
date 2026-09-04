@@ -12,7 +12,7 @@ import (
 	"github.com/cis/cis-backend/internal/models"
 )
 
-// SettingRepository manages cis_settings, the F4 global configuration store.
+// SettingRepository manages cis_settings, the global configuration store.
 type SettingRepository struct {
 	db *gorm.DB
 }
@@ -44,7 +44,7 @@ func (r *SettingRepository) Get(ctx context.Context, key string) (*models.CISSet
 
 // Upsert writes a setting, creating it when absent.
 //
-// The threshold applies globally (US32), so there is exactly one row per key
+// The threshold applies globally, so there is exactly one row per key
 // and the ON CONFLICT keeps that invariant even under concurrent writes.
 func (r *SettingRepository) Upsert(ctx context.Context, key, value, valueType, description string, updatedBy *uuid.UUID) (*models.CISSetting, error) {
 	now := time.Now().UTC()
@@ -83,7 +83,7 @@ type SettingWrite struct {
 }
 
 // UpsertMany writes several settings and their history entries in one
-// transaction (F4's dynamic parameters; see models.ConfigParams).
+// transaction (the dynamic parameters; see models.ConfigParams).
 //
 // # Why this is a batch rather than a loop of Upsert calls
 //

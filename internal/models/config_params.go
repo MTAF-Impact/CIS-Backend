@@ -8,7 +8,7 @@ import (
 )
 
 // The dynamic-parameter registry: every value that may be changed at runtime
-// through F4 instead of a redeploy.
+// through Admin Settings instead of a redeploy.
 //
 // # Why a registry and not thirty constants
 //
@@ -17,8 +17,9 @@ import (
 // from, and the two hand-off documents (FE_DYNAMIC_PARAMETER.md,
 // AI_DYNAMIC_PARAMETER.md). Four hand-maintained copies of a bound is four
 // chances for the form to accept a value the server then rejects, which is the
-// exact failure DetectorParamRanges already exists to prevent for F5. So the
-// table below is the single source, and everything else is generated from it.
+// exact failure DetectorParamRanges already exists to prevent for the
+// detector's own settings. So the table below is the single source, and
+// everything else is generated from it.
 //
 // # Where the values actually live
 //
@@ -30,7 +31,7 @@ import (
 //
 // # What is deliberately NOT here
 //
-//   - The F5 detector's ~30 parameters. They live in cis_detector_settings as
+//   - The detector's ~30 parameters. They live in cis_detector_settings as
 //     typed columns because two of their constraints are cross-field, which a
 //     flat key/value setter cannot check. See CISDetectorSettings.
 //   - Infrastructure: ports, pool sizes, timeouts, cron expressions, storage
@@ -66,8 +67,8 @@ const (
 )
 
 // Sum groups: sets whose members must add up to exactly 1.00. Named here so
-// the validator, the catalog and the F4 form's running total all mean the same
-// thing by "the composite weights".
+// the validator, the catalog and the settings form's running total all mean
+// the same thing by "the composite weights".
 const (
 	SumGroupCompositeWeights = "composite_weights"
 	SumGroupHarmWeights      = "harm_weights"
@@ -82,20 +83,20 @@ const (
 // is the identity of a stored row, so renaming one would orphan an operator's
 // saved value behind a fresh default.
 const (
-	// Composite Claim Score weights (PRD 6.3, US22; AP-01..AP-05).
+	// Composite Claim Score weights.
 	SettingWeightReach              = "scoring.weight_reach"
 	SettingWeightVelocity           = "scoring.weight_velocity"
 	SettingWeightFalseness          = "scoring.weight_falseness"
 	SettingWeightHarm               = "scoring.weight_harm"
 	SettingWeightEmotionalIntensity = "scoring.weight_emotional_intensity"
 
-	// Harm Severity sub-weights (PRD 6.2.4, US23; AP-06..AP-09).
+	// Harm Severity sub-weights.
 	SettingHarmWeightPublicSafety       = "scoring.harm_weight_public_safety"
 	SettingHarmWeightInstitutionalTrust = "scoring.harm_weight_institutional_trust"
 	SettingHarmWeightEconomic           = "scoring.harm_weight_economic"
 	SettingHarmWeightPolicyDisruption   = "scoring.harm_weight_policy_disruption"
 
-	// Reach & Velocity normalisation (PRD 6.2.1-6.2.2; AP-10..AP-13).
+	// Reach & Velocity normalisation.
 	SettingReachWindowDays      = "scoring.reach_normalization_window_days"
 	SettingReachWeightImpress   = "scoring.reach_weight_impressions"
 	SettingReachWeightAuthors   = "scoring.reach_weight_unique_authors"
@@ -106,22 +107,22 @@ const (
 	SettingVelocityZMax         = "scoring.velocity_zscore_max"
 	SettingVelocityEpsilon      = "scoring.velocity_epsilon"
 
-	// Net Pushback Ratio and its discount (PRD 6.4; AP-14..AP-15).
+	// Net Pushback Ratio and its discount.
 	SettingNPRWindowHours        = "scoring.npr_window_hours"
 	SettingDiscountGamma         = "scoring.discount_gamma"
 	SettingNPRReliabilityMinimum = "scoring.npr_reliability_minimum_posts"
 
-	// Falseness Confidence (PRD 6.2.3).
+	// Falseness Confidence.
 	SettingFalsenessMatchThreshold = "scoring.falseness_match_threshold"
 	SettingFalsenessLiveMatchScore = "scoring.falseness_live_match_score"
 
-	// Clustering and matchmaking similarity gates (PRD US42, Section 6.2.1).
+	// Clustering and matchmaking similarity gates.
 	SettingClaimAttachThreshold  = "clustering.claim_attach_threshold"
 	SettingTopicAttachThreshold  = "clustering.topic_attach_threshold"
 	SettingPolicyMatchPrefilter  = "matchmaking.claim_prefilter_threshold"
 	SettingDebunkSegmentMaxCount = "ai.debunk_segment_max_count"
 
-	// Indonesia Climate Sentiment Index (PRD 6.6; AP-18..AP-20).
+	// Indonesia Climate Sentiment Index.
 	SettingCSIWeightBCS        = "csi.weight_bcs"
 	SettingCSIWeightRiskLoad   = "csi.weight_risk_load"
 	SettingCSIWindowDays       = "csi.window_days"
@@ -130,26 +131,27 @@ const (
 	SettingCSIBandRiskyCeiling = "csi.band_risky_ceiling"
 	SettingCSIBandWatchCeiling = "csi.band_watch_ceiling"
 
-	// F6 Overview presentation (PRD Section 11, US69, US70).
+	// Overview presentation.
 	SettingTreemapWeightAboveCount = "overview.treemap_weight_above_count"
 	SettingTreemapWeightAvgScore   = "overview.treemap_weight_avg_score"
 	SettingTopPolicyLimit          = "overview.top_policy_limit"
 	SettingMoMWindowDays           = "overview.mom_window_days"
 
-	// F2 Public Policy Bank (PRD Section 7, US40; AP-17).
+	// Public Policy Bank.
 	SettingPolicyUploadWarnMB = "policy.upload_warn_size_mb"
 
-	// F3 score history retention.
+	// Score history retention.
 	SettingScoreSnapshotRetentionDays = "alerts.score_snapshot_retention_days"
 )
 
 // HarmPolicyDisruptionCeiling is a hard cap, not a recommendation.
 //
-// PRD 6.2.4 weights PolicyDisruption lowest because scoring "criticism of the
-// government's own policy" as harm carries inherent bias risk; a ceiling is
-// what stops that weight being tuned upward until the tool starts ranking
-// critics. It is named here because it is a rule, not a starting value — every
-// other default lives once, as the Default field of its registry row.
+// PolicyDisruption is weighted lowest of the harm sub-scores because scoring
+// "criticism of the government's own policy" as harm carries inherent bias
+// risk; a ceiling is what stops that weight being tuned upward until the tool
+// starts ranking critics. It is named here because it is a rule, not a
+// starting value — every other default lives once, as the Default field of
+// its registry row.
 const HarmPolicyDisruptionCeiling = 0.25
 
 // ConfigParam describes one dynamically-configurable value.
@@ -159,9 +161,9 @@ type ConfigParam struct {
 	// Tier is ConfigTierOperations or ConfigTierAnalytics — who is expected to
 	// change this, which is what decides the screen it belongs on.
 	Tier string `json:"tier"`
-	// Section groups semantically related parameters within a tier, so the F4
-	// form can render one fieldset per section without inventing its own
-	// grouping.
+	// Section groups semantically related parameters within a tier, so the
+	// settings form can render one fieldset per section without inventing its
+	// own grouping.
 	Section string `json:"section"`
 	Type    string `json:"type"`
 	Default string `json:"default"`
@@ -176,23 +178,23 @@ type ConfigParam struct {
 	// SumGroup, when set, names a set whose members must total exactly 1.00.
 	SumGroup string `json:"sum_group,omitempty"`
 	// Derived marks a value that is computed from another parameter and has no
-	// stored row: it is served read-only so F4 can show it beside its source.
+	// stored row: it is served read-only so the settings form can show it
+	// beside its source.
 	Derived bool `json:"derived,omitempty"`
 	// ManagedBy names a dedicated endpoint when a parameter needs validation
 	// the generic setter cannot perform (a city catalog, an IANA zone table).
 	// Such a parameter is read through the catalog and written only there.
 	ManagedBy string `json:"managed_by,omitempty"`
 	PRDRef    string `json:"prd_ref,omitempty"`
-	// ParamID is the AP-xx identifier from the Admin Configurable Parameters
-	// specification, carried through so a row here can be traced to the
-	// document it came from.
+	// ParamID is a short tracking code for this parameter, carried through so
+	// a row here can be cross-referenced elsewhere.
 	ParamID     string `json:"param_id,omitempty"`
 	Description string `json:"description"`
 	// Note carries a caveat the bounds alone do not express.
 	Note string `json:"note,omitempty"`
 }
 
-// ConfigSection labels one fieldset of the F4 form.
+// ConfigSection labels one fieldset of the settings form.
 type ConfigSection struct {
 	Key         string `json:"key"`
 	Tier        string `json:"tier"`
@@ -200,7 +202,7 @@ type ConfigSection struct {
 	Description string `json:"description"`
 }
 
-// Section keys, in the order F4 should render them.
+// Section keys, in the order the settings form should render them.
 const (
 	SectionAlerting          = "alerting"
 	SectionOverviewDisplay   = "overview_display"
@@ -331,7 +333,7 @@ var ConfigParams = []ConfigParam{
 	},
 
 	// ---------------------------------------------------------------------
-	// Tier 2 — Analytics: composite weights (PRD 6.3, AP-01..AP-05)
+	// Tier 2 — Analytics: composite weights
 	// ---------------------------------------------------------------------
 	{
 		Key: SettingWeightReach, Label: "Weight — Reach (R)",
@@ -374,7 +376,7 @@ var ConfigParams = []ConfigParam{
 		Description: "Share contributed by how angry the public reaction to the claim is.",
 	},
 
-	// --- Harm sub-weights (PRD 6.2.4, AP-06..AP-09) ---
+	// --- Harm sub-weights ---
 	{
 		Key: SettingHarmWeightPublicSafety, Label: "Harm — Public Safety",
 		Tier: ConfigTierAnalytics, Section: SectionHarmWeights,
@@ -411,7 +413,7 @@ var ConfigParams = []ConfigParam{
 			"scores as harm.",
 	},
 
-	// --- Reach & Velocity normalisation (PRD 6.2.1-6.2.2, AP-10..AP-13) ---
+	// --- Reach & Velocity normalisation ---
 	{
 		Key: SettingReachWindowDays, Label: "Reach normalisation window",
 		Tier: ConfigTierAnalytics, Section: SectionReachVelocity,
@@ -478,7 +480,7 @@ var ConfigParams = []ConfigParam{
 		Description: "Division-by-zero guard for a brand-new claim with no prior volume.",
 	},
 
-	// --- Pushback discount (PRD 6.4, AP-14..AP-15) ---
+	// --- Pushback discount ---
 	{
 		Key: SettingNPRWindowHours, Label: "Pushback rolling window",
 		Tier: ConfigTierAnalytics, Section: SectionPushback,
@@ -504,7 +506,7 @@ var ConfigParams = []ConfigParam{
 		Description: "Total volume below which no discount is applied, because the pushback signal is too thin to trust.",
 	},
 
-	// --- Falseness (PRD 6.2.3) ---
+	// --- Falseness ---
 	{
 		Key: SettingFalsenessMatchThreshold, Label: "Debunk match threshold",
 		Tier: ConfigTierAnalytics, Section: SectionFalseness,
@@ -547,7 +549,7 @@ var ConfigParams = []ConfigParam{
 		Note:        "A recall knob: lower widens the candidate set and costs more LLM calls per upload.",
 	},
 
-	// --- Climate Sentiment Index (PRD 6.6, AP-18..AP-19) ---
+	// --- Climate Sentiment Index ---
 	{
 		Key: SettingCSIWeightBCS, Label: "CSI weight — baseline sentiment",
 		Tier: ConfigTierAnalytics, Section: SectionSentimentIndex,
@@ -607,7 +609,7 @@ var ConfigParams = []ConfigParam{
 			"points; the defaults split the scale into equal thirds.",
 	},
 
-	// --- Overview ranking (PRD Section 11, US69) ---
+	// --- Overview ranking ---
 	{
 		Key: SettingTreemapWeightAboveCount, Label: "Ranking weight — claims above threshold",
 		Tier: ConfigTierAnalytics, Section: SectionOverviewRanking,
@@ -694,7 +696,7 @@ func (p ConfigParam) DefaultFloat() float64 {
 
 // sumTolerance absorbs float64 representation error. 0.15 + 0.15 + 0.30 + 0.30
 // + 0.10 is not exactly 1.0 in binary floating point, so an exact comparison
-// would reject the PRD's own defaults.
+// would reject the registry's own defaults.
 const sumTolerance = 1e-9
 
 // ValidateValue checks one value against its declared type and bounds,

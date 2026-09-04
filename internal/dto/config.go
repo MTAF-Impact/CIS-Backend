@@ -6,7 +6,7 @@ import (
 	"github.com/cis/cis-backend/internal/models"
 )
 
-// The F4 dynamic-parameter payloads (models.ConfigParams).
+// The Admin Settings dynamic-parameter payloads (models.ConfigParams).
 //
 // The catalog carries the registry's own metadata alongside each current
 // value, so the frontend renders its form from the server's description of the
@@ -28,7 +28,8 @@ type ConfigParamView struct {
 	// when no row exists.
 	Value string `json:"value"`
 	// IsSet reports that the effective value differs from the documented
-	// default, so F4 can offer a reset only where there is something to reset.
+	// default, so the settings form can offer a reset only where there is
+	// something to reset.
 	// Deliberately not "a row exists": the seed writes a row for every
 	// parameter, so row existence would be true everywhere and mean nothing.
 	IsSet bool `json:"is_set"`
@@ -37,7 +38,7 @@ type ConfigParamView struct {
 	Writable bool `json:"writable"`
 }
 
-// ConfigSectionView is one fieldset of the F4 form.
+// ConfigSectionView is one fieldset of the settings form.
 type ConfigSectionView struct {
 	Key         string            `json:"key"`
 	Tier        string            `json:"tier"`

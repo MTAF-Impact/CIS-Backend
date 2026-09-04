@@ -16,7 +16,7 @@ import (
 	"github.com/cis/cis-backend/internal/service"
 )
 
-// ClaimHandler serves F1, the Claim Repository Bank.
+// ClaimHandler serves the Claim Repository Bank.
 type ClaimHandler struct {
 	claims *service.ClaimService
 }
@@ -26,8 +26,8 @@ func NewClaimHandler(claims *service.ClaimService) *ClaimHandler {
 	return &ClaimHandler{claims: claims}
 }
 
-// Repository handles GET /api/v1/claims/repository, returning the whole F1 page
-// in one call.
+// Repository handles GET /api/v1/claims/repository, returning the whole Claim
+// Repository Bank page in one call.
 //
 // Each section (S1 Existing, S2 Non-Existing) paginates independently:
 // `existing_page`/`existing_limit` and `non_existing_page`/`non_existing_limit`
@@ -168,7 +168,7 @@ func (h *ClaimHandler) UpdateStatus(c *fiber.Ctx) error {
 	return response.OK(c, "claim status updated", res)
 }
 
-// ConfirmHarm handles PUT /api/v1/claims/:id/harm/confirm (Flow 4).
+// ConfirmHarm handles PUT /api/v1/claims/:id/harm/confirm.
 //
 // The body is optional: sending none is the "these sub-scores are right as
 // classified" case, which still records the human confirmation.
@@ -264,7 +264,7 @@ func parsePathUUID(c *fiber.Ctx, name string) (uuid.UUID, error) {
 }
 
 // parseUUIDList parses a comma-separated list of UUIDs, used by the
-// multi-select topic filter (US6, US15).
+// multi-select topic filter.
 func parseUUIDList(raw string) ([]uuid.UUID, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -287,7 +287,7 @@ func parseUUIDList(raw string) ([]uuid.UUID, error) {
 	return out, nil
 }
 
-// parseStatusFilter validates the US1 status tab value. Empty and "all" both
+// parseStatusFilter validates the status tab value. Empty and "all" both
 // mean no filtering.
 func parseStatusFilter(raw string) (string, error) {
 	raw = strings.ToLower(strings.TrimSpace(raw))

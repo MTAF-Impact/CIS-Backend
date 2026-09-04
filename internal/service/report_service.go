@@ -27,23 +27,23 @@ import (
 	"github.com/cis/cis-backend/internal/storage"
 )
 
-// ReportService generates the F5 evidence artefacts: the PDF report (US58,
-// US59), the machine-readable evidence bundle (US60), and the export audit log
-// they both write to (US64).
+// ReportService generates the coordinated-network evidence artefacts: the PDF
+// report, the machine-readable evidence bundle, and the export audit log they
+// both write to.
 //
 // # The gate
 //
-// Every path through this service passes through assertExportable first. US58
-// permits generation only for networks at Medium or High confidence whose
-// review status is Under Review, Confirmed, or Action Taken. It is enforced
-// here, in the service layer, and not in the UI — PRD 10.9.1 rule 4 makes human
-// review before escalation a governance requirement, and a rule enforced only
-// in a form is a rule that a second client does not have.
+// Every path through this service passes through assertExportable first,
+// which permits generation only for networks at Medium or High confidence
+// whose review status is Under Review, Confirmed, or Action Taken. It is
+// enforced here, in the service layer, and not in the UI — human review before
+// escalation is a governance requirement, and a rule enforced only in a form
+// is a rule that a second client does not have.
 //
 // # Where the files live
 //
 // store is bound to the coordinated-network bucket (SUPABASE_REPORT_BUCKET,
-// default "coordinated-network-pdf"), separate from the bucket holding F2's
+// default "coordinated-network-pdf"), separate from the bucket holding
 // uploaded policy documents. Downloads are handed to the browser as signed URLs
 // pointing at that bucket rather than proxied through this API: the artefacts
 // are large, the container is stateless, and a navigation cannot carry a bearer
@@ -77,14 +77,14 @@ func NewReportService(
 	}
 }
 
-// Generate produces a PDF report for a network (US58, US59).
+// Generate produces a PDF report for a network.
 //
 // The ordering inside this function is not arbitrary:
 //
 //  1. Gate first. Nothing is assembled for a network that may not be exported.
-//  2. The audit row is created BEFORE rendering, because PRD 10.8 item 10
-//     prints its id inside the document. "Log the export after it succeeds"
-//     would produce a report with an empty chain-of-custody slot.
+//  2. The audit row is created BEFORE rendering, because the report prints its
+//     id inside the document as the chain-of-custody entry. "Log the export
+//     after it succeeds" would produce a report with an empty slot there.
 //  3. The file is uploaded, then the report row is written. A row pointing at
 //     an object that failed to upload would offer a download that 404s.
 func (s *ReportService) Generate(
@@ -192,7 +192,7 @@ func (s *ReportService) attachSignedURL(ctx context.Context, view *dto.ReportVie
 	view.ExpiresAt = &expiresAt
 }
 
-// resolveSections applies US59's toggles, with its one non-negotiable.
+// resolveSections applies the report's section toggles, with its one non-negotiable.
 //
 // The account annex is MANDATORY in a platform referral and cannot be switched
 // off: "a referral without the account list is not actionable". An internal
@@ -217,7 +217,7 @@ func resolveSections(req dto.GenerateReportRequest) dto.ReportSections {
 	return sections
 }
 
-// assertExportable is US58's gate, written as an allowlist.
+// assertExportable is the export gate, written as an allowlist.
 //
 // Two conditions, both server-side:
 //
@@ -227,8 +227,8 @@ func resolveSections(req dto.GenerateReportRequest) dto.ReportSections {
 // Written as models.IsReportableNetworkStatus rather than as
 // `status != unreviewed`, which is the shape that invites the failure this
 // exists to prevent: exporting a network the team already examined and
-// concluded was organic. PRD 10.1 names that the single largest harm the
-// platform can cause, and this predicate is where it either happens or does not.
+// concluded was organic — the single largest harm this system can cause, and
+// this predicate is where it either happens or does not.
 func (s *ReportService) assertExportable(ctx context.Context, networkID uuid.UUID) (*dto.NetworkDetail, error) {
 	detail, err := s.netSvc.Detail(ctx, networkID)
 	if err != nil {
@@ -243,14 +243,14 @@ func (s *ReportService) assertExportable(ctx context.Context, networkID uuid.UUI
 		}
 		return nil, apperr.Forbidden(
 			"a network cannot be exported while its review status is %q. A machine has not yet been checked "+
-				"by a person, and an unreviewed export is an unreviewed accusation (US58). "+
+				"by a person, and an unreviewed export is an unreviewed accusation. "+
 				"Allowed statuses: %s",
 			detail.ReviewStatus, strings.Join(models.ReportableNetworkStatuses, ", "))
 	}
 
 	if detail.ConfidenceBand == models.ConfidenceLow {
 		return nil, apperr.Forbidden(
-			"reports may only be generated for networks at Medium or High confidence (US58); this one is Low")
+			"reports may only be generated for networks at Medium or High confidence; this one is Low")
 	}
 
 	return detail, nil
@@ -336,10 +336,10 @@ func (s *ReportService) gatherReportData(
 		return nil, apperr.Internal("could not load the evidence snapshot").Wrap(err)
 	}
 
-	// PRD 10.8 item 8 requires the methodology appendix to print the parameters
-	// that produced THIS run, read from the run rather than from current
-	// settings. A report printing today's configuration for last quarter's
-	// detection would be reproducible only by coincidence.
+	// The methodology appendix prints the parameters that produced THIS run,
+	// read from the run rather than from current settings. A report printing
+	// today's configuration for last quarter's detection would be reproducible
+	// only by coincidence.
 	if runID, err := uuid.Parse(detail.Run.RunID); err == nil {
 		if run, err := s.networks.FindRun(ctx, runID); err == nil && len(run.ParametersJSON) > 0 {
 			var params map[string]any
@@ -352,7 +352,7 @@ func (s *ReportService) gatherReportData(
 	return data, nil
 }
 
-// ListReports returns a network's generated reports (US58).
+// ListReports returns a network's generated reports.
 func (s *ReportService) ListReports(ctx context.Context, networkID uuid.UUID) ([]dto.ReportView, error) {
 	rows, err := s.reports.ListReports(ctx, networkID)
 	if err != nil {
@@ -365,8 +365,7 @@ func (s *ReportService) ListReports(ctx context.Context, networkID uuid.UUID) ([
 	return out, nil
 }
 
-// Download resolves a stored artefact for delivery (US58: stored, versioned,
-// re-downloadable).
+// Download resolves a stored, versioned, re-downloadable artefact for delivery.
 //
 // It returns metadata and, when the store can sign, a URL the browser fetches
 // directly from object storage — the reader is nil in that case and the file
@@ -453,17 +452,17 @@ func reportMimeType(filename string) string {
 	return "application/pdf"
 }
 
-// EvidenceBundle produces US60's machine-readable ZIP.
+// EvidenceBundle produces a machine-readable ZIP.
 //
-// Contents, exactly as the story specifies: the PDF, network.json (the full
-// snapshot including per-edge signal decomposition and run parameters),
-// accounts.csv, posts.csv (with per-post SHA-256), and MANIFEST.txt listing
-// every file with its hash and the bundle's generation timestamp.
+// Contents: the PDF, network.json (the full snapshot including per-edge
+// signal decomposition and run parameters), accounts.csv, posts.csv (with
+// per-post SHA-256), and MANIFEST.txt listing every file with its hash and
+// the bundle's generation timestamp.
 //
-// The manifest is the point. US60: "The manifest hashes establish that the
-// bundle was not modified after generation — necessary for the report to
-// function as evidence rather than assertion." A recipient can verify it with
-// sha256sum and nothing else.
+// The manifest is the point: its hashes establish that the bundle was not
+// modified after generation, which is what lets it function as evidence
+// rather than assertion. A recipient can verify it with sha256sum and nothing
+// else.
 func (s *ReportService) EvidenceBundle(
 	ctx context.Context, networkID uuid.UUID, req dto.GenerateReportRequest, user *AuthenticatedUser,
 ) (*dto.ReportView, error) {
@@ -608,7 +607,7 @@ func buildZip(files []bundleFile, at time.Time) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// buildManifest writes US60's MANIFEST.txt: every file with its hash, plus the
+// buildManifest writes MANIFEST.txt: every file with its hash, plus the
 // bundle's generation timestamp.
 func buildManifest(networkID uuid.UUID, runID string, bundleID, auditID uuid.UUID, at time.Time, files []bundleFile) []byte {
 	var b strings.Builder
@@ -633,7 +632,7 @@ func buildManifest(networkID uuid.UUID, runID string, bundleID, auditID uuid.UUI
 	return []byte(b.String())
 }
 
-// buildNetworkJSON is US60's network.json: the full snapshot, including the
+// buildNetworkJSON produces network.json: the full snapshot, including the
 // per-edge signal decomposition and the run parameters.
 func (s *ReportService) buildNetworkJSON(ctx context.Context, networkID uuid.UUID, detail *dto.NetworkDetail) ([]byte, error) {
 	graph, err := s.netSvc.Graph(ctx, networkID)
@@ -695,8 +694,7 @@ func (s *ReportService) buildAccountsCSV(ctx context.Context, networkID uuid.UUI
 	return buf.Bytes(), nil
 }
 
-// buildPostsCSV is US60's posts.csv, with the per-post SHA-256 the story
-// requires.
+// buildPostsCSV produces posts.csv, with a per-post SHA-256.
 //
 // The digest is what lets a recipient show that a post they are reading is
 // byte-for-byte what was captured, months after the original was deleted.
@@ -746,11 +744,11 @@ func (s *ReportService) buildPostsCSV(ctx context.Context, networkID uuid.UUID) 
 	return buf.Bytes(), nil
 }
 
-// RecordCSVExport writes the audit entry for a US57 account-list export.
+// RecordCSVExport writes the audit entry for an account-list CSV export.
 //
-// US57 says the CSV is "logged to the export audit log", and it is the export
-// most likely to be treated as casual — a spreadsheet, not a referral. It leaves
-// the platform carrying every member handle, so it is logged like the others.
+// This is the export most likely to be treated as casual — a spreadsheet, not
+// a referral — but it leaves the platform carrying every member handle, so it
+// is logged like the others.
 func (s *ReportService) RecordCSVExport(ctx context.Context, networkID uuid.UUID, user *AuthenticatedUser) error {
 	row, err := s.networks.FindNetworkByID(ctx, networkID)
 	if err != nil {
@@ -772,11 +770,11 @@ func (s *ReportService) RecordCSVExport(ctx context.Context, networkID uuid.UUID
 	return nil
 }
 
-// AuditLog returns export audit entries (US64).
+// AuditLog returns export audit entries.
 //
-// Readable by any authenticated user. PRD US64 says "viewable by admins", and
-// this backend has no role model at all — a deliberate, recorded deviation. The
-// audit property comes from attribution: every entry records who exported what
+// Readable by any authenticated user — this backend has no role model at all,
+// a deliberate, recorded deviation. The audit property comes from
+// attribution: every entry records who exported what
 // and when, which is what makes the log answer its question. A role check would
 // have been a second, weaker layer over that.
 func (s *ReportService) AuditLog(
@@ -858,7 +856,7 @@ func toReportView(r models.CISNetworkReport) dto.ReportView {
 // AuthenticatedUser carries the acting caller's identity into the export
 // artefacts.
 //
-// Every F5 write records who did it — updated_by, added_by, generated_by,
+// Every coordinated-network write records who did it — updated_by, added_by, generated_by,
 // user_id — and that attribution is doing the work a role check would otherwise
 // do. This backend has no roles by design, so the log is the accountability
 // mechanism rather than a supplement to one.

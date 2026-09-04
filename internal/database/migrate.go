@@ -35,7 +35,7 @@ var ownedModels = []any{
 	&models.CISClaimScoreSnapshot{},
 	&models.CISSetting{},
 
-	// F5 — Coordinated-Network Detector. Every one of these records a human
+	// Coordinated-Network Detector. Every one of these records a human
 	// decision or a backend-generated artefact; the detector's own output is
 	// AI-owned and appears in optionalAITables below, never here.
 	&models.CISNetworkReview{},
@@ -50,32 +50,33 @@ var ownedModels = []any{
 
 // requiredAITables are read by the backend but owned by the AI service. Their
 // absence is reported as a warning at boot rather than a fatal error, so the
-// API can still start (and F2/F4 still work) against a database where the AI
-// pipeline has not run yet.
+// API can still start, and features that don't depend on claim data still
+// work, against a database where the AI pipeline has not run yet.
 var requiredAITables = []string{
 	"claims", "topics", "policies", "claim_policies", "content_items",
 }
 
-// optionalAITables are the F5 detection pipeline's output tables (PRD 10.10).
-// They are AI-owned and read-only here, exactly like requiredAITables, but
-// their absence is a different situation: F1-F4 work perfectly without them,
-// and they only exist once the detection pipeline has been built and has run.
+// optionalAITables are the coordinated-network detection pipeline's output
+// tables. They are AI-owned and read-only here, exactly like
+// requiredAITables, but their absence is a different situation: the rest of
+// the product works perfectly without them, and they only exist once the
+// detection pipeline has been built and has run.
 //
 // So a missing one is reported at a lower volume than a missing claims table,
-// and the F5 endpoints answer 503 rather than leaking a Postgres
-// "relation does not exist" — see repository.ErrPipelineUnavailable.
+// and the coordinated-network endpoints answer 503 rather than leaking a
+// Postgres "relation does not exist" — see repository.ErrPipelineUnavailable.
 var optionalAITables = []string{
 	"detection_run", "coordinated_network", "network_account", "account",
 	"network_edge", "network_evidence_post", "network_burst_bin",
 	"network_claim_link", "offtopic_cluster", "evidence_snapshot",
 }
 
-// optionalF6Tables and optionalF6Columns are the v1.5 additions the AI service
-// has to provision before F6 and the segmented Debunk Activity can be served
-// (PRD v1.5, US12, US67). They degrade rather than fail: a missing debunk
-// segment table falls back to the single cached draft, and missing sentiment
-// data makes O1 report "Insufficient Data", which is the state PRD 6.6.3
-// already requires for thin coverage. See docs/sql/02_f6_reference_schema.sql.
+// optionalF6Tables and optionalF6Columns are the additions the AI service has
+// to provision before the Overview page and the segmented Debunk Activity can
+// be served. They degrade rather than fail: a missing debunk segment table
+// falls back to the single cached draft, and missing sentiment data makes the
+// Overview page report "Insufficient Data", the state already required for
+// thin coverage. See docs/sql/02_f6_reference_schema.sql.
 var optionalF6Tables = []string{"claim_debunk_segments"}
 
 var optionalF6Columns = map[string][]string{
@@ -185,7 +186,7 @@ func warnMissingAITables(db *gorm.DB) {
 	}
 }
 
-// seedSettings inserts the F4 defaults only when absent, so an operator's saved
+// seedSettings inserts the Admin Settings defaults only when absent, so an operator's saved
 // value survives every restart.
 //
 // Every dynamically-configurable parameter is seeded from models.ConfigParams —
@@ -212,7 +213,7 @@ func seedSettings(db *gorm.DB) error {
 	}
 
 	// Not a configurable parameter: operational state the system writes for
-	// itself (US9/US33), which is why it is absent from the registry.
+	// itself, which is why it is absent from the registry.
 	defaults = append(defaults, models.CISSetting{
 		Key:         models.SettingClaimsLastFetchedAt,
 		Value:       time.Now().UTC().Format(time.RFC3339),
@@ -270,7 +271,7 @@ func seedUser(db *gorm.DB, cfg config.AuthConfig) error {
 	return nil
 }
 
-// seedDetectorSettings inserts PRD 10.11's default parameter set as the single
+// seedDetectorSettings inserts the default parameter set as the single
 // cis_detector_settings row, only when absent.
 //
 // DoNothing on conflict is load-bearing: an operator's tuned thresholds must

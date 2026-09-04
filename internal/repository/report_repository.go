@@ -11,8 +11,7 @@ import (
 	"github.com/cis/cis-backend/internal/models"
 )
 
-// ReportRepository manages generated F5 reports and the export audit log
-// (US58, US60, US64).
+// ReportRepository manages generated network reports and the export audit log.
 //
 // Both tables are backend-owned. Nothing here reads a detector table, which
 // means the audit trail stays queryable even on a deployment where the pipeline
@@ -27,7 +26,7 @@ func NewReportRepository(db *gorm.DB) *ReportRepository {
 	return &ReportRepository{db: db}
 }
 
-// ListReports returns a network's generated reports, newest first (US58).
+// ListReports returns a network's generated reports, newest first.
 //
 // Versioning is implicit — multiple rows per network, never an overwrite — so
 // an earlier report stays downloadable exactly as it was submitted. A referral
@@ -55,13 +54,13 @@ func (r *ReportRepository) FindReport(ctx context.Context, id uuid.UUID) (*model
 	return &row, nil
 }
 
-// CreateAuditEntry writes an export audit row and returns it (US64).
+// CreateAuditEntry writes an export audit row and returns it.
 //
 // # Why this is called BEFORE the file is rendered
 //
-// PRD 10.8 item 10 requires the report's chain-of-custody section to print the
-// export audit entry ID — the id is inside the document the export produces. So
-// the row has to exist, with its id allocated, before rendering starts.
+// The report's chain-of-custody section prints the export audit entry ID —
+// the id is inside the document the export produces. So the row has to exist,
+// with its id allocated, before rendering starts.
 // Ordinary "log the export after it succeeds" wiring produces a report with an
 // empty chain-of-custody slot, which is precisely the field that distinguishes
 // the document from an assertion.
@@ -90,7 +89,7 @@ func (r *ReportRepository) CreateReport(ctx context.Context, report *models.CISN
 	return r.db.WithContext(ctx).Create(report).Error
 }
 
-// AuditFilter narrows the US64 export audit log.
+// AuditFilter narrows the export audit log.
 type AuditFilter struct {
 	UserID     *uuid.UUID
 	NetworkID  *uuid.UUID
@@ -109,13 +108,12 @@ type AuditRow struct {
 	UserEmail                *string `gorm:"column:user_email"`
 }
 
-// ListAuditLog returns export audit entries, newest first (US64).
+// ListAuditLog returns export audit entries, newest first.
 //
-// Filterable by user, network and date, which is what the story asks for.
-// NetworkID and RunID are first-class columns rather than a generic
-// object_type/object_id pair — PRD 10.10 offers one slot for three ids, and
-// without them "which exported reports contain a now-allowlisted account?" has
-// no query.
+// Filterable by user, network and date. NetworkID and RunID are first-class
+// columns rather than a generic object_type/object_id pair, because without
+// them "which exported reports contain a now-allowlisted account?" has no
+// query.
 func (r *ReportRepository) ListAuditLog(ctx context.Context, f AuditFilter) ([]AuditRow, int64, error) {
 	q := r.db.WithContext(ctx).Table("cis_export_audit_log AS l")
 
@@ -159,11 +157,10 @@ func (r *ReportRepository) ListAuditLog(ctx context.Context, f AuditFilter) ([]A
 
 // ExportsForNetworks returns audit entries touching any of the given networks.
 //
-// This is the query behind US56's unfinished edge: allowlisting an account
-// "suppresses and relabels" its historical networks, but a PDF citing accounts
-// since allowlisted is already in someone's inbox and cannot be recalled. Naming
-// the exports at least makes the exposure answerable — see PRD-v1.4.md open
-// question 9.
+// Allowlisting an account suppresses and relabels its historical networks,
+// but a PDF citing accounts since allowlisted is already in someone's inbox
+// and cannot be recalled. Naming the exports at least makes the exposure
+// answerable.
 func (r *ReportRepository) ExportsForNetworks(ctx context.Context, networkIDs []uuid.UUID) ([]AuditRow, error) {
 	if len(networkIDs) == 0 {
 		return nil, nil

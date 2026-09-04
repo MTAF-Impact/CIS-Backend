@@ -27,8 +27,8 @@ go mod download
 
 ## Step 2 — Create the Supabase Storage buckets
 
-Two buckets, because the files differ in kind: uploaded policy documents (US40)
-and generated coordinated-network evidence about named accounts (US58, US60).
+Two buckets, because the files differ in kind: uploaded policy documents
+and generated coordinated-network evidence about named accounts.
 Separating them means the evidence bucket's access policy and retention can be
 tightened without touching the documents an operator uploaded.
 
@@ -89,7 +89,7 @@ SEED_USER_NAME=CIS Admin
 # Optional — leave empty to run without the AI service
 AI_SERVICE_URL=
 # Optional — this backend's public base URL, sent to the AI service as the
-# Flow 2 callback target
+# matchmaking callback target
 BACKEND_PUBLIC_URL=
 ```
 
@@ -160,8 +160,9 @@ docker run -d --name cis-pg \
 # 2. Load the AI team's schema so claim endpoints have tables to read
 docker exec -i cis-pg psql -U postgres -d cis -f - < docs/sql/00_ai_reference_schema.sql
 
-# 3. Optional — F5's detection tables, so the network endpoints answer with data
-#    instead of 503. Skip it and F1-F4 still work perfectly.
+# 3. Optional — the coordinated-network detection tables, so the network
+#    endpoints answer with data instead of 503. Skip it and the rest of the
+#    API still works perfectly.
 docker exec -i cis-pg psql -U postgres -d cis -f - < docs/sql/01_f5_reference_schema.sql
 ```
 
@@ -248,7 +249,7 @@ DB_LOG_LEVEL=error
   `CRON_ENABLED=false` on the others so the rollout, snapshot/rescore and
   matchmaking-retry jobs do not run concurrently.
 - Set `BACKEND_PUBLIC_URL` to this backend's externally reachable base URL. It
-  is sent to the AI service as `callback_url` on Flow 1, so one AI deployment
+  is sent to the AI service as `callback_url` on the matchmaking hand-off, so one AI deployment
   can serve staging and production without either knowing the other exists.
 
 ### ⚠️ Keep `/api/v1/internal/*` on the internal network
@@ -276,7 +277,7 @@ default:
 
 | Var (AI side) | Must be | If left unset |
 |---|---|---|
-| `BACKEND_URL` | this backend's base URL | **Flow 2 is skipped entirely.** Every policy uploaded through F2 acks, matches, and never reports back. |
+| `BACKEND_URL` | this backend's base URL | **The matchmaking callback is skipped entirely.** Every uploaded policy acks, matches, and never reports back. |
 
 That is the only one.
 
@@ -312,7 +313,7 @@ Expected on a database where the AI pipeline has not run. Load
 `docs/sql/00_ai_reference_schema.sql` locally, or point at the shared database.
 
 **Policy upload returns 422**
-Only `.pdf`, `.doc`, and `.docx` are accepted (US40). The response message is
+Only `.pdf`, `.doc`, and `.docx` are accepted. The response message is
 written for direct display in the upload modal.
 
 **Policy card stuck on "Processing"**
@@ -323,7 +324,7 @@ status, retry with `POST /api/v1/policies/:id/rematch`.
 
 A card that stays on `processing` for longer than `AI_MATCHMAKING_STALE_AFTER`
 (30m default) is re-queued automatically by the matchmaking-retry job — the AI
-service acked but its Flow 2 callback never arrived, almost always because
+service acked but its matchmaking callback never arrived, almost always because
 `BACKEND_URL` is unset on the AI service. Fix that first; the sweep is a safety
 net, not a substitute. `processing_attempts` caps the retries, so a card that is
 still stuck after a few sweeps has exhausted them and needs a manual
@@ -337,12 +338,12 @@ foreign key cascades into it. Run `POST /api/v1/admin/reconcile?dry_run=true` to
 see the damage, then without the flag to clear the dangling rows and re-queue
 the affected policies.
 
-**F3 chart is empty**
+**Score history chart is empty**
 Three possible causes, in order of likelihood: no claim has its chart checkbox
-ticked (US28 — the default); the watched claims have no snapshots yet (run
+ticked (unticked is the default); the watched claims have no snapshots yet (run
 `POST /api/v1/admin/snapshot-scores`); or the `from`/`to` window excludes them.
 
-**F3 chart is a flat horizontal line**
+**Score history chart is a flat horizontal line**
 Nothing is changing the scores. The hourly job asks the AI service to rescore
 before it captures, so this means `AI_SERVICE_URL` is empty, the AI service is
 unreachable, or no content is arriving. Check `/health/ready`'s

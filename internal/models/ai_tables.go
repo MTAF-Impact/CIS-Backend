@@ -27,9 +27,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// Canonical claim types. The PRD calls these Existing/Generic and
-// Non-Existing/Synthetic; the AI service writes one of the aliases below into
-// claims.claim_type.
+// Canonical claim types: Existing (also called Generic) and Non-Existing
+// (also called Synthetic). The AI service writes one of the aliases below
+// into claims.claim_type.
 const (
 	ClaimTypeExisting    = "existing"
 	ClaimTypeNonExisting = "non_existing"
@@ -65,11 +65,10 @@ func ClaimTypeValues(canonical string) []string {
 	return NonExistingClaimTypeValues
 }
 
-// Content stance values, written by the AI service on content_items.stance.
-//
-// The PRD's "Positive Statements" / "Negative Statements" lists (US12) map onto
-// these: Positive = supporting, Negative = opposing. Neutral is excluded from
-// both, mirroring the NPR definition in PRD 6.4.2.
+// Content stance values, written by the AI service on content_items.stance:
+// Positive statements map to supporting, Negative statements to opposing.
+// Neutral is excluded from both, matching how the Net Pushback Ratio counts
+// only content that actually takes a side.
 const (
 	StanceSupporting = "supporting"
 	StanceOpposing   = "opposing"
@@ -86,8 +85,8 @@ type AIClaim struct {
 	PolicyID       *uuid.UUID `gorm:"column:policy_id;type:uuid"`
 	FirstCaughtAt  time.Time  `gorm:"column:first_caught_at"`
 
-	// PRD Section 6 parameters. All are computed and written by the AI service;
-	// the backend reads and displays them but never recomputes or stores them.
+	// Scoring parameters. All are computed and written by the AI service; the
+	// backend reads and displays them but never recomputes or stores them.
 	ReachScore                 *float64 `gorm:"column:reach_score"`              // R
 	VelocityScore              *float64 `gorm:"column:velocity_score"`           // V
 	FalsenessScore             *float64 `gorm:"column:falseness_score"`          // F
@@ -105,8 +104,8 @@ type AIClaim struct {
 	FinalClaimScore            *float64 `gorm:"column:final_claim_score"`            // ranking value, 0-100
 	IsDormant                  bool     `gorm:"column:is_dormant"`
 
-	// Debunk/Prebunk draft, generated once by the AI service and cached here.
-	// US12/US20 require the backend to serve this without re-calling the AI.
+	// Debunk/Prebunk draft, generated once by the AI service and cached here
+	// so the backend can keep serving it without re-calling the AI.
 	ActivityContent     *string    `gorm:"column:activity_content"`
 	ActivityGeneratedAt *time.Time `gorm:"column:activity_generated_at"`
 
@@ -138,9 +137,9 @@ func (AITopic) TableName() string { return "topics" }
 
 // AIPolicy is the AI service's `policies` table. READ ONLY.
 //
-// The backend never writes here. Policies created through F2 live in
-// cis_policies and reference this table's id via CISPolicy.AIPolicyID once the
-// AI service reports back from matchmaking (US42).
+// The backend never writes here. Policies created through the Public Policy
+// Bank live in cis_policies and reference this table's id via
+// CISPolicy.AIPolicyID once the AI service reports back from matchmaking.
 type AIPolicy struct {
 	ID          uuid.UUID `gorm:"column:id;type:uuid;primaryKey"`
 	Title       string    `gorm:"column:title"`
@@ -152,7 +151,7 @@ type AIPolicy struct {
 func (AIPolicy) TableName() string { return "policies" }
 
 // AIClaimPolicy is the AI service's `claim_policies` join table, carrying the
-// many-to-many Existing-claim <-> policy relation from US12/US39. READ ONLY.
+// many-to-many Existing-claim <-> policy relation. READ ONLY.
 type AIClaimPolicy struct {
 	ClaimID  uuid.UUID `gorm:"column:claim_id;type:uuid;primaryKey"`
 	PolicyID uuid.UUID `gorm:"column:policy_id;type:uuid;primaryKey"`
@@ -203,7 +202,8 @@ func (AITopicVolumeBucket) TableName() string { return "topic_volume_buckets" }
 // on a harm confirmation, and on POST /claims/rescore — for every claim
 // touched. That is event-driven and covers every claim, where the backend's own
 // cis_claim_score_snapshots is sampled hourly and only for watched claims. The
-// F3 chart therefore reads both and merges them; see SnapshotRepository.Series.
+// Alert page chart therefore reads both and merges them; see
+// SnapshotRepository.Series.
 //
 // It carries no claim_score column, only the final value.
 type AIClaimScoreSnapshot struct {
@@ -229,7 +229,7 @@ type AIFaultLine struct {
 func (AIFaultLine) TableName() string { return "fault_lines" }
 
 // AIOfficialSource is the AI service's `official_sources` table: the verified
-// corpus behind the Falseness Confidence parameter (PRD 6.2.3). READ ONLY.
+// corpus behind the Falseness Confidence parameter. READ ONLY.
 type AIOfficialSource struct {
 	ID        uuid.UUID `gorm:"column:id;type:uuid;primaryKey"`
 	Title     string    `gorm:"column:title"`

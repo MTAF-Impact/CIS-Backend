@@ -2,7 +2,7 @@ package dto
 
 import "time"
 
-// PolicyCard is the F2 policy card (US37).
+// PolicyCard is the policy card shown in the Public Policy Bank.
 type PolicyCard struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -18,7 +18,7 @@ type PolicyCard struct {
 	FileSize     int64  `json:"file_size_bytes"`
 	DownloadURL  string `json:"download_url"`
 
-	// AI matchmaking state driving the "Processing" badge (US42).
+	// AI matchmaking state driving the "Processing" badge.
 	ProcessingStatus string  `json:"processing_status"`
 	ProcessingError  *string `json:"processing_error,omitempty"`
 	IsProcessing     bool    `json:"is_processing"`
@@ -28,10 +28,10 @@ type PolicyCard struct {
 	AIPolicyID          *string    `json:"ai_policy_id"`
 }
 
-// PolicyDetail is the F2 policy detail page (US39).
+// PolicyDetail is the policy detail page.
 //
-// The two claim lists reuse the exact ClaimCard shape from F1, so the frontend
-// can render them with the identical component per the PRD's design guideline.
+// The two claim lists reuse the exact ClaimCard shape from the claim list, so
+// the frontend can render them with the identical component.
 type PolicyDetail struct {
 	PolicyCard
 	Description *string `json:"description"`
@@ -41,7 +41,7 @@ type PolicyDetail struct {
 }
 
 // CreatePolicyRequest is the multipart form behind the "Add Public Policy"
-// modal (US40). The file itself arrives as the `file` part.
+// modal. The file itself arrives as the `file` part.
 type CreatePolicyRequest struct {
 	Name string `form:"name" validate:"required,min=2,max=500"`
 	// RolledOutDate is a YYYY-MM-DD date from the modal's date picker.
@@ -54,8 +54,8 @@ type UpdatePolicyRequest struct {
 	Name          *string `json:"name" validate:"omitempty,min=2,max=500"`
 	RolledOutDate *string `json:"rolled_out_date" validate:"omitempty,datetime=2006-01-02"`
 	Description   *string `json:"description" validate:"omitempty,max=5000"`
-	// Status is the rollout status (US41). Editing the date alone never moves
-	// it: the transition is a human decision, so it has to be stated.
+	// Status is the rollout status. Editing the date alone never moves it: the
+	// transition is a human decision, so it has to be stated.
 	Status *string `json:"status" validate:"omitempty,oneof=rolled_out not_rolled_out"`
 }
 
@@ -64,8 +64,8 @@ type UpdatePolicyStatusRequest struct {
 	Status string `json:"status" validate:"required,oneof=rolled_out not_rolled_out"`
 }
 
-// PolicyProcessingStatus is the lightweight payload the F2 card polls while the
-// matchmaking job runs (US42).
+// PolicyProcessingStatus is the lightweight payload the policy card polls
+// while the matchmaking job runs.
 type PolicyProcessingStatus struct {
 	PolicyID         string     `json:"policy_id"`
 	ProcessingStatus string     `json:"processing_status"`
@@ -77,14 +77,14 @@ type PolicyProcessingStatus struct {
 	LinkedClaimCount int64      `json:"linked_claim_count"`
 }
 
-// PolicyYearsResponse backs the US34 year filter chips.
+// PolicyYearsResponse backs the year filter chips.
 type PolicyYearsResponse struct {
 	Years []int `json:"years"`
 }
 
 // MatchmakingResultRequest is the body the AI service posts back to
-// POST /api/v1/internal/policies/:id/matchmaking-result once US42's pipeline
-// finishes.
+// POST /api/v1/internal/policies/:id/matchmaking-result once the matchmaking
+// pipeline finishes.
 //
 // The AI service writes the claims, topics, and link rows into its own tables
 // itself; this callback only tells the backend which policy id it used and
@@ -97,7 +97,7 @@ type MatchmakingResultRequest struct {
 	Error               *string `json:"error" validate:"omitempty,max=2000"`
 }
 
-// DownloadResponse describes where a policy document can be fetched (US37).
+// DownloadResponse describes where a policy document can be fetched.
 type DownloadResponse struct {
 	FileName    string     `json:"file_name"`
 	MimeType    string     `json:"mime_type"`

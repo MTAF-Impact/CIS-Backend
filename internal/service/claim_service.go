@@ -16,21 +16,22 @@ import (
 	"github.com/cis/cis-backend/internal/scoring"
 )
 
-// TopAccountLimit is the size of the US12 Top 5 Accounts panel.
+// TopAccountLimit is the size of the Top 5 Accounts panel.
 const TopAccountLimit = 5
 
-// ClaimService assembles the F1 Claim Repository Bank payloads.
+// ClaimService assembles the Claim Repository Bank payloads.
 //
-// It holds an AI client for exactly one reason: harm confirmation (Flow 4)
-// writes claims.harm_* columns, which this backend never writes itself. Every
+// It holds an AI client for exactly one reason: harm confirmation writes
+// claims.harm_* columns, which this backend never writes itself. Every
 // other field on this page is a plain database read.
 type ClaimService struct {
 	claims    *repository.ClaimRepository
 	alerts    *repository.AlertRepository
 	policies  *repository.PolicyRepository
 	snapshots *repository.SnapshotRepository
-	// networks resolves the US61 "Coordinated network detected" indicator. It
-	// is the one F5 dependency F1 has, and it is read-only.
+	// networks resolves the "Coordinated network detected" indicator. It is
+	// the only dependency this service has on the network detector, and it
+	// is read-only.
 	networks *repository.NetworkRepository
 	settings *SettingService
 	ai       *aiclient.Client
@@ -57,7 +58,7 @@ func NewClaimService(
 	}
 }
 
-// ListClaimsQuery is the normalized input for the "See all" list (US8, US17).
+// ListClaimsQuery is the normalized input for the "See all" list.
 type ListClaimsQuery struct {
 	ClaimType string
 	Status    string
@@ -68,11 +69,11 @@ type ListClaimsQuery struct {
 	Limit     int
 }
 
-// Repository builds the whole F1 page: both sections plus the last-fetched
-// timestamp.
+// Repository builds the whole Claim Repository Bank page: both sections plus
+// the last-fetched timestamp.
 //
-// Both sections are always returned. Per US1 the status tab filters claims
-// within each section and never hides a section outright.
+// Both sections are always returned. The status tab filters claims within
+// each section and never hides a section outright.
 //
 // Each section paginates independently — the caller supplies its own
 // page/limit per section, since S1 and S2 pool sizes are unrelated and the
@@ -115,7 +116,7 @@ func (s *ClaimService) Repository(
 func (s *ClaimService) buildSection(
 	ctx context.Context, claimType, status string, topicIDs []uuid.UUID, search string, page dto.PageParams,
 ) (*dto.ClaimSection, error) {
-	// S1 ranks by FinalClaimScore (US7); S2 by newest predicted claim (US16).
+	// S1 ranks by FinalClaimScore; S2 by newest predicted claim.
 	sortBy := repository.SortByScore
 	section, label, sortedBy := "S1", "Existing Claim (Generic Claim)", "final_claim_score DESC"
 	if claimType == models.ClaimTypeNonExisting {
@@ -213,7 +214,7 @@ func (s *ClaimService) toCards(ctx context.Context, rows []repository.ClaimRow) 
 		return cards, nil
 	}
 
-	// Only Existing claims carry counts, alert state, and a score (US18).
+	// Only Existing claims carry counts, alert state, and a score.
 	existingIDs := make([]uuid.UUID, 0, len(rows))
 	for _, row := range rows {
 		if models.NormalizeClaimType(row.ClaimType) == models.ClaimTypeExisting {
@@ -242,8 +243,9 @@ func (s *ClaimService) toCards(ctx context.Context, rows []repository.ClaimRow) 
 
 // buildClaimCard converts one claim row into a card.
 //
-// Shared by F1 and by F2's detail page (US39), which reuses the identical card
-// component and must therefore receive an identical payload.
+// Shared by the Claim Repository Bank and by the policy detail page, which
+// reuses the identical card component and must therefore receive an
+// identical payload.
 func buildClaimCard(
 	row repository.ClaimRow,
 	counts map[uuid.UUID]repository.StanceCount,
@@ -261,7 +263,7 @@ func buildClaimCard(
 		card.Topic = &dto.TopicRef{ID: row.TopicID.String(), Name: *row.TopicName}
 	}
 
-	// Synthetic claims carry no score, dates, or statement counts (US18).
+	// Synthetic claims carry no score, dates, or statement counts.
 	if card.ClaimType != models.ClaimTypeExisting {
 		return card
 	}
@@ -277,15 +279,13 @@ func buildClaimCard(
 	card.NegativeStatementCount = &count.Negative
 	card.IsDormant = &isDormant
 	card.IsOnAlert = &onAlert
-	// US61's triage icon. nil when nothing qualifies, so the field is omitted
-	// rather than sent as null — the PRD is explicit that there is no empty
-	// state for this indicator.
+	// Triage icon: nil when nothing qualifies, so the field is omitted rather
+	// than sent as null — there is no empty state for this indicator.
 	card.CoordinatedNetwork = toNetworkBadge(badges, row.ID)
 	return card
 }
 
-// Detail builds the claim detail page payload (US12 for Existing claims, US20
-// for Synthetic ones).
+// Detail builds the claim detail page payload.
 func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDetail, error) {
 	row, err := s.claims.FindClaimByID(ctx, id)
 	if err != nil {
@@ -339,7 +339,7 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 
 	if claimType != models.ClaimTypeExisting {
 		// Synthetic claims are never scored, never watched, and carry no
-		// statement lists (US18, US20, US26).
+		// statement lists.
 		return detail, nil
 	}
 
@@ -347,9 +347,9 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 	detail.FirstCaughtAt = &firstCaught
 	detail.ScoreBreakdown = s.buildBreakdown(ctx, row)
 
-	// US23: an edited H must be visually distinguishable from an AI-original one
-	// everywhere it is shown, which needs the edit itself, not only the
-	// harm_human_confirmed flag.
+	// An edited harm score must be visually distinguishable from an
+	// AI-original one everywhere it is shown, which needs the edit itself,
+	// not only the harm_human_confirmed flag.
 	edit, err := s.claims.LatestHarmEdit(ctx, row.ID)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, apperr.Internal("could not load the harm edit audit trail").Wrap(err)
@@ -379,9 +379,10 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 	onAlert := alerted[row.ID]
 	detail.IsOnAlert = &onAlert
 
-	// US61. This is the point of F5 in daily use: it is what decides whether
-	// the team publicly rebuts this claim or refers it to the platform
-	// instead, so it belongs on the page where that decision is made.
+	// This is the point of the coordinated-network indicator in daily use:
+	// it decides whether the team publicly rebuts this claim or refers it
+	// to the platform instead, so it belongs on the page where that
+	// decision is made.
 	badges, err := networkBadges(ctx, s.networks, []uuid.UUID{row.ID})
 	if err != nil {
 		return nil, err
@@ -391,8 +392,8 @@ func (s *ClaimService) Detail(ctx context.Context, id uuid.UUID) (*dto.ClaimDeta
 	return detail, nil
 }
 
-// buildActivity wraps the cached AI draft. US12/US20 require this to be served
-// from cache — the backend must never trigger a new generation on view.
+// buildActivity wraps the cached AI draft, served from cache — the backend
+// must never trigger a new generation on view.
 //
 // The AI service writes the Debunk twice: once flat, in activity_content, and
 // once split into the Truth Sandwich's three blocks. Both are returned, because
@@ -411,8 +412,8 @@ func buildActivity(claimType string, claim models.AIClaim) dto.ActivityContent {
 		Content:     claim.ActivityContent,
 		GeneratedAt: claim.ActivityGeneratedAt,
 		Available:   claim.ActivityContent != nil && *claim.ActivityContent != "",
-		// Always an array, never null: US12 renders a list of segment cards, and
-		// a nullable list is a branch the frontend should not have to write.
+		// Always an array, never null: the frontend renders a list of segment
+		// cards, and a nullable list is a branch it should not have to write.
 		Segments: []dto.DebunkSegment{},
 	}
 
@@ -428,14 +429,14 @@ func buildActivity(claimType string, claim models.AIClaim) dto.ActivityContent {
 	return activity
 }
 
-// buildBreakdown assembles the US23 Score Transparency payload.
+// buildBreakdown assembles the Score Transparency payload.
 //
 // Every component is returned together with FinalClaimScore so the collapsed
-// number is never presented without its inputs. Values are clamped defensively
-// per PRD 6.3 / 6.4.4.
+// number is never presented without its inputs. Values are clamped
+// defensively.
 //
 // The weights and the plain-language formula come from the live configuration
-// rather than from constants: an admin who retunes them in F4 changes what the
+// rather than from constants: an admin who retunes them changes what the
 // score means, and a breakdown that kept explaining the old weighting would be
 // describing a ranking the system no longer performs.
 func (s *ClaimService) buildBreakdown(ctx context.Context, row *repository.ClaimRow) *dto.ScoreBreakdown {
@@ -467,9 +468,9 @@ func (s *ClaimService) buildBreakdown(ctx context.Context, row *repository.Claim
 		Formula:         scoring.FormulaSummary(weights, harmWeights, gamma),
 	}
 
-	// US25 / PRD 6.4.7: a dormant claim has no volume to measure pushback
-	// against, so NPR and the discount must be shown as not-applicable rather
-	// than as numbers that would imply its priority was reduced.
+	// A dormant claim has no volume to measure pushback against, so NPR and
+	// the discount must be shown as not-applicable rather than as numbers
+	// that would imply its priority was reduced.
 	if row.IsDormant {
 		breakdown.NPR = nil
 		breakdown.DiscountFactor = nil
@@ -478,7 +479,7 @@ func (s *ClaimService) buildBreakdown(ctx context.Context, row *repository.Claim
 	return breakdown
 }
 
-// toHarmEditAudit renders the US23 audit row for the detail page.
+// toHarmEditAudit renders the audit row for the detail page.
 func toHarmEditAudit(edit *models.CISClaimHarmEdit) *dto.HarmEditAudit {
 	out := &dto.HarmEditAudit{
 		EditedAt: edit.EditedAt,
@@ -498,7 +499,7 @@ func toHarmEditAudit(edit *models.CISClaimHarmEdit) *dto.HarmEditAudit {
 }
 
 // correlatedPolicies resolves the policies linked to a claim, preferring this
-// backend's F2 record when one shadows the AI policy id.
+// backend's own policy record when one shadows the AI policy id.
 func (s *ClaimService) correlatedPolicies(ctx context.Context, row *repository.ClaimRow) ([]dto.PolicyRef, error) {
 	aiPolicyIDs, err := s.claims.ListPolicyIDsForClaim(ctx, row.ID, row.PolicyID)
 	if err != nil {
@@ -545,7 +546,7 @@ func (s *ClaimService) correlatedPolicies(ctx context.Context, row *repository.C
 			})
 			continue
 		}
-		// A policy the AI service created directly, with no F2 record behind it.
+		// A policy the AI service created directly, with no backend record behind it.
 		if p, ok := aiByID[aiID]; ok {
 			aiIDStr := aiID.String()
 			refs = append(refs, dto.PolicyRef{
@@ -563,7 +564,7 @@ func (s *ClaimService) correlatedPolicies(ctx context.Context, row *repository.C
 // Statements returns a page of a claim's source posts.
 //
 // Positive maps to supporting stance and Negative to opposing, matching the NPR
-// definition in PRD 6.4.2 so the counts always agree with the score.
+// definition so the counts always agree with the score.
 func (s *ClaimService) Statements(ctx context.Context, claimID uuid.UUID, kind string, page, limit int) ([]dto.Statement, int64, dto.PageParams, error) {
 	window := dto.NormalizePage(page, limit)
 
@@ -605,7 +606,7 @@ func (s *ClaimService) Statements(ctx context.Context, claimID uuid.UUID, kind s
 	return out, total, window, nil
 }
 
-// TopAccounts returns the accounts driving a claim's spread (US12).
+// TopAccounts returns the accounts driving a claim's spread.
 func (s *ClaimService) TopAccounts(ctx context.Context, claimID uuid.UUID, limit int) ([]dto.AccountRef, error) {
 	if limit < 1 {
 		limit = TopAccountLimit
@@ -639,7 +640,7 @@ func (s *ClaimService) Policies(ctx context.Context, claimID uuid.UUID) ([]dto.P
 	return s.correlatedPolicies(ctx, row)
 }
 
-// UpdateStatus records a reviewer's status decision (US10, US18).
+// UpdateStatus records a reviewer's status decision.
 //
 // This writes the backend-owned cis_claim_reviews overlay; the AI service's
 // claims.status is never modified, so a pipeline re-run cannot overwrite a
@@ -675,8 +676,7 @@ func (s *ClaimService) UpdateStatus(ctx context.Context, claimID uuid.UUID, req 
 	return res, nil
 }
 
-// ConfirmHarm records a reviewer's confirmation of a claim's Harm sub-scores
-// (Flow 4, PRD 6.2.4).
+// ConfirmHarm records a reviewer's confirmation of a claim's Harm sub-scores.
 //
 // This is the one claim mutation the backend cannot perform itself: the four
 // harm_* columns, harm_human_confirmed, and every score derived from them live
@@ -685,8 +685,8 @@ func (s *ClaimService) UpdateStatus(ctx context.Context, claimID uuid.UUID, req 
 // final_claim_score, and the claim is then re-read from the database so the
 // response is built from the same source as every other claim read.
 //
-// Synthetic claims are rejected before the call: they carry no scores at all
-// (US18), so there is nothing to confirm.
+// Synthetic claims are rejected before the call: they carry no scores at
+// all, so there is nothing to confirm.
 func (s *ClaimService) ConfirmHarm(
 	ctx context.Context, claimID uuid.UUID, req dto.ConfirmHarmRequest, editedBy *uuid.UUID,
 ) (*dto.ClaimDetail, error) {
@@ -696,9 +696,9 @@ func (s *ClaimService) ConfirmHarm(
 				"written exclusively by it. Set AI_SERVICE_URL to enable this action.")
 	}
 
-	// Read before the write, not just for existence: US23 requires the audit
-	// trail to hold what the AI had classified before the reviewer overrode it,
-	// and after the call those values are gone.
+	// Read before the write, not just for existence: the audit trail must
+	// hold what the AI had classified before the reviewer overrode it, and
+	// after the call those values are gone.
 	before, err := s.claims.FindClaimByID(ctx, claimID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -725,7 +725,7 @@ func (s *ClaimService) ConfirmHarm(
 		return nil, apperr.Unavailable("the AI service could not record the harm confirmation: %s", err.Error())
 	}
 
-	// The override has to be attributable (US23), and harm_human_confirmed is a
+	// The override has to be attributable, and harm_human_confirmed is a
 	// boolean on an AI-owned table carrying neither who nor when nor what
 	// changed. The audit row is written after the AI service accepted the
 	// change: an audit entry for an edit that failed is worse than none.
@@ -746,10 +746,10 @@ func (s *ClaimService) ConfirmHarm(
 		return nil, apperr.Internal("could not record the harm edit audit entry").Wrap(err)
 	}
 
-	// The US23 system flow ends with the claim re-evaluating against the alert
-	// threshold: recomputing H moves FinalClaimScore, which can push a watched
-	// claim across it. Waiting for the hourly snapshot job would mean an edit
-	// made at 09:05 goes unnotified until 10:00.
+	// Confirming harm re-evaluates the claim against the alert threshold:
+	// recomputing H moves FinalClaimScore, which can push a watched claim
+	// across it. Waiting for the hourly snapshot job would mean an edit made
+	// at 09:05 goes unnotified until 10:00.
 	threshold, err := s.settings.AlertThreshold(ctx)
 	if err != nil {
 		return nil, err
@@ -805,8 +805,8 @@ type TopicView struct {
 	NonExistingClaimCount int64   `json:"non_existing_claim_count"`
 }
 
-// Topics returns every topic with per-type claim counts, backing the US6/US15
-// filter chips.
+// Topics returns every topic with per-type claim counts, backing the filter
+// chips.
 func (s *ClaimService) Topics(ctx context.Context) ([]TopicView, error) {
 	topics, err := s.claims.ListTopics(ctx)
 	if err != nil {

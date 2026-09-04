@@ -49,9 +49,9 @@ func NewSupabase(cfg config.StorageConfig, bucket string) (*Supabase, error) {
 		serviceKey: cfg.SupabaseServiceKey,
 		bucket:     bucket,
 		signTTL:    ttl,
-		// No client-side timeout: US40 allows arbitrarily large policy
-		// documents, and a fixed deadline would truncate a slow large upload.
-		// Cancellation is driven by the request context instead.
+		// No client-side timeout: policy documents may be arbitrarily large,
+		// and a fixed deadline would truncate a slow large upload. Cancellation
+		// is driven by the request context instead.
 		client: &http.Client{},
 	}, nil
 }

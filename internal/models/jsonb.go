@@ -8,11 +8,12 @@ import (
 
 // JSONB is a raw JSON document stored in a Postgres `jsonb` column.
 //
-// F5 carries several payloads whose shape belongs to the detector rather than
-// to this backend: detection_run.parameters_json, network_account
-// .score_contribution_json, cis_network_review_log.signal_profile_json. Mapping
-// them as typed structs here would make every detector change a backend change,
-// so they are passed through as opaque documents and re-emitted verbatim.
+// The coordinated-network detector's payloads (detection_run.parameters_json,
+// network_account.score_contribution_json,
+// cis_network_review_log.signal_profile_json) whose shape belongs to the
+// detector rather than to this backend. Mapping them as typed structs here
+// would make every detector change a backend change, so they are passed
+// through as opaque documents and re-emitted verbatim.
 type JSONB []byte
 
 // Scan implements sql.Scanner.

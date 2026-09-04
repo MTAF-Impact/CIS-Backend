@@ -17,7 +17,7 @@ import (
 	"github.com/cis/cis-backend/internal/storage"
 )
 
-// PolicyHandler serves F2, the Public Policy Bank.
+// PolicyHandler serves the Public Policy Bank.
 type PolicyHandler struct {
 	policies *service.PolicyService
 }
@@ -75,7 +75,7 @@ func (h *PolicyHandler) Detail(c *fiber.Ctx) error {
 	return response.OK(c, "policy detail", detail)
 }
 
-// Create handles POST /api/v1/policies, the "Add Public Policy" modal (US40).
+// Create handles POST /api/v1/policies, the "Add Public Policy" modal.
 //
 // The body is multipart/form-data: `file`, `name`, `rolled_out_date`.
 func (h *PolicyHandler) Create(c *fiber.Ctx) error {
@@ -97,8 +97,8 @@ func (h *PolicyHandler) Create(c *fiber.Ctx) error {
 		return apperr.BadRequest("a policy document must be uploaded in the 'file' field")
 	}
 
-	// US40: only PDF and Word are accepted, and other formats must be rejected
-	// with an inline error the modal can display.
+	// Only PDF and Word are accepted, and other formats must be rejected with
+	// an inline error the modal can display.
 	mimeType, err := storage.ValidateDocument(header.Filename, header.Header.Get("Content-Type"))
 	if err != nil {
 		return apperr.Unprocessable("%s", err.Error())
@@ -152,7 +152,7 @@ func (h *PolicyHandler) Update(c *fiber.Ctx) error {
 	return response.OK(c, "public policy updated", card)
 }
 
-// UpdateStatus handles PUT /api/v1/policies/:id/status (US41).
+// UpdateStatus handles PUT /api/v1/policies/:id/status.
 //
 // The rollout status is set by whoever knows whether the policy actually
 // launched. It used to be derived nightly from the rolled-out date; a date is a
@@ -228,7 +228,7 @@ func (h *PolicyHandler) Delete(c *fiber.Ctx) error {
 	return response.OK(c, "public policy deleted", nil)
 }
 
-// Download handles GET /api/v1/policies/:id/file (US37).
+// Download handles GET /api/v1/policies/:id/file.
 //
 // By default it redirects to a time-limited signed URL so the file never
 // transits this server. Pass ?mode=json to receive the URL as data instead, or
@@ -280,7 +280,7 @@ func (h *PolicyHandler) Download(c *fiber.Ctx) error {
 }
 
 // ProcessingStatus handles GET /api/v1/policies/:id/processing, polled by the
-// F2 card while the "Processing" badge is shown (US42).
+// policy card while the "Processing" badge is shown.
 func (h *PolicyHandler) ProcessingStatus(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -337,7 +337,7 @@ func (h *PolicyHandler) MatchmakingResult(c *fiber.Ctx) error {
 	return response.OK(c, "matchmaking result recorded", status)
 }
 
-// parseYearList parses the US34 multi-select year filter.
+// parseYearList parses the multi-select year filter.
 func parseYearList(raw string) ([]int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

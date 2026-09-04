@@ -14,13 +14,15 @@ import (
 	"github.com/cis/cis-backend/internal/repository"
 )
 
-// F5's F4 surface: the governed detector configuration (US62).
+// The coordinated-network detector's admin surface: the governed detector
+// configuration.
 //
 // These are SettingService methods rather than a separate service because they
-// are the same feature as the alert threshold — F4's global configuration — and
-// splitting them would give the F4 page two services to talk to for one screen.
+// are the same feature as the alert threshold — governed global configuration
+// — and splitting them would give the settings page two services to talk to
+// for one screen.
 
-// DetectorSettings loads the current parameter set (US62).
+// DetectorSettings loads the current parameter set.
 func (s *SettingService) DetectorSettings(ctx context.Context) (*models.CISDetectorSettings, error) {
 	settings, err := s.settings.DetectorSettings(ctx)
 	if err != nil {
@@ -30,7 +32,7 @@ func (s *SettingService) DetectorSettings(ctx context.Context) (*models.CISDetec
 }
 
 // DetectorSettingsView returns the parameter set with its audit metadata and
-// the self-exclusion count (US62).
+// the self-exclusion count.
 func (s *SettingService) DetectorSettingsView(ctx context.Context, selfExclusionCount int64) (*dto.DetectorSettingsView, error) {
 	settings, err := s.DetectorSettings(ctx)
 	if err != nil {
@@ -41,8 +43,8 @@ func (s *SettingService) DetectorSettingsView(ctx context.Context, selfExclusion
 	return view, nil
 }
 
-// DetectorParamRanges exposes PRD 10.11's Default Parameter Reference so the
-// F4 screen can render bounded inputs without duplicating the table.
+// DetectorParamRanges exposes the default parameter reference so the settings
+// screen can render bounded inputs without duplicating the table.
 //
 // Served rather than hardcoded in the frontend for the same reason the
 // disclaimer is: two copies of a specification drift, and here the drift would
@@ -51,7 +53,7 @@ func (s *SettingService) DetectorParamRanges() []models.ParamRange {
 	return models.DetectorParamRanges
 }
 
-// UpdateDetectorSettings validates and stores a new parameter set (US62).
+// UpdateDetectorSettings validates and stores a new parameter set.
 //
 // # Partial updates
 //
@@ -66,9 +68,9 @@ func (s *SettingService) DetectorParamRanges() []models.ParamRange {
 // In models.CISDetectorSettings.Validate, not in struct tags, because two of the
 // constraints are cross-field: the five fusion weights must sum to 1.00, and the
 // scheduled cadence may not exceed half the detection window (which is how
-// PRD 10.5.1's 50% overlap rule is actually enforced). A validator tag cannot
-// see a sibling field, and both constraints are reachable using values that are
-// individually legal.
+// consecutive runs are kept overlapping by at least 50%). A validator tag
+// cannot see a sibling field, and both constraints are reachable using values
+// that are individually legal.
 func (s *SettingService) UpdateDetectorSettings(
 	ctx context.Context, req dto.UpdateDetectorSettingsRequest, updatedBy *uuid.UUID,
 ) (*dto.DetectorSettingsView, error) {
@@ -175,7 +177,7 @@ func toDetectorSettingsView(s models.CISDetectorSettings) *dto.DetectorSettingsV
 	return view
 }
 
-// SettingHistory returns configuration changes, newest first (US62).
+// SettingHistory returns configuration changes, newest first.
 //
 // keyPrefix narrows to one family: repository.DetectorSettingPrefix for the
 // detector parameters, or a bare key such as "alert_threshold".
@@ -208,10 +210,10 @@ func (s *SettingService) SettingHistory(
 }
 
 // CityTimezone returns the IANA zone used for the city-local half of every
-// report footer timestamp (PRD 10.8).
+// report footer timestamp.
 //
-// The PRD requires "UTC and city-local time" on every page and never names the
-// city; nothing else in the system knows either, and the scheduler is pinned to
+// Every page must show "UTC and city-local time" without naming the city;
+// nothing else in the system knows either, and the scheduler is pinned to
 // UTC. An unparseable stored value falls back to the default rather than
 // failing the report, because a footer in the wrong zone is a smaller failure
 // than a report that will not render.
@@ -232,7 +234,7 @@ func (s *SettingService) CityTimezone(ctx context.Context) *time.Location {
 	return loc
 }
 
-// SetCityTimezone stores the report footer's local zone (PRD 10.8).
+// SetCityTimezone stores the report footer's local zone.
 func (s *SettingService) SetCityTimezone(ctx context.Context, name string, updatedBy *uuid.UUID) (string, error) {
 	name = strings.TrimSpace(name)
 	if _, err := time.LoadLocation(name); err != nil {

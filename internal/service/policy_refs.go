@@ -15,16 +15,16 @@ import (
 // API returns.
 //
 // A policy can exist in two forms and both have to render: one registered
-// through F2 (cis_policies, carrying a document, a rollout status and a
+// through cis_policies (carrying a document, a rollout status and a
 // rolled-out date) and one the AI service created directly during matchmaking,
 // which has none of those. The `source` field is what tells them apart, and the
-// F2 record wins when both exist because it is the one with the operator's own
-// metadata on it.
+// cis_policies record wins when both exist because it is the one with the
+// operator's own metadata on it.
 //
-// Shared by F1's claim detail (US12), F2's own lookups, and F5's network detail
-// (US49), where the linked policies are resolved transitively through the
-// network's linked claims. Three callers, one shape — a network's policy list
-// must look exactly like a claim's, since it is the same object.
+// Shared by claim detail, policy lookups, and network detail, where the linked
+// policies are resolved transitively through the network's linked claims.
+// Three callers, one shape — a network's policy list must look exactly like a
+// claim's, since it is the same object.
 func resolvePolicyRefs(
 	ctx context.Context, policies *repository.PolicyRepository, aiPolicyIDs []uuid.UUID,
 ) ([]dto.PolicyRef, error) {
@@ -69,7 +69,7 @@ func resolvePolicyRefs(
 			})
 			continue
 		}
-		// A policy the AI service created directly, with no F2 record behind it.
+		// A policy the AI service created directly, with no cis_policies record behind it.
 		if p, ok := aiByID[aiID]; ok {
 			refs = append(refs, dto.PolicyRef{
 				ID:          p.ID.String(),

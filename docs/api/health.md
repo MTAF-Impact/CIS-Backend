@@ -60,7 +60,7 @@ curl http://localhost:8080/health/ready
 |---|---|
 | `database` | `up`, or `down: <reason>` |
 | `storage_driver` | `supabase` or `local` |
-| `ai_service.configured` | Whether `AI_SERVICE_URL` is set. `false` disables policy matchmaking and every F4 AI utility. |
+| `ai_service.configured` | Whether `AI_SERVICE_URL` is set. `false` disables policy matchmaking and every AI-powered utility. |
 | `ai_service.reachable` | Whether the AI service answered `GET /health`. Present only when `configured` is `true`. |
 | `ai_service.error` | Present only when `reachable` is `false` — why the probe failed. |
 
@@ -72,9 +72,9 @@ about anything listening on it.
 { "ai_service": { "configured": true, "reachable": false, "error": "call AI service: dial tcp 10.0.3.7:8000: connect: connection refused" } }
 ```
 
-**An unreachable AI service does not fail readiness.** The backend serves F1, F2
-and F3 in full without it — every claim read is a plain database query — so
-taking pods out of rotation over a dead AI service would turn a partial
+**An unreachable AI service does not fail readiness.** The backend serves all
+read endpoints in full without it — every claim read is a plain database query
+— so taking pods out of rotation over a dead AI service would turn a partial
 degradation into a full outage. Only the write-through flows degrade, and each
 returns its own `503` saying so.
 

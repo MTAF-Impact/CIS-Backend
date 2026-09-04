@@ -30,11 +30,11 @@ type Config struct {
 // UnlimitedBodyLimit is the request-body cap applied when
 // APP_BODY_LIMIT_BYTES is 0.
 //
-// US40 asks for "no file-size limit" on policy uploads. A literal absence of a
-// limit is not expressible: fasthttp treats any value <= 0 as "use the 4 MB
-// default", which would silently reject real policy PDFs. So "unlimited" is
-// implemented as the largest value that fits in an int on every platform,
-// ~2 GiB, which is far beyond any plausible policy document.
+// Policy uploads must have no effective file-size limit, but a literal
+// absence of a limit is not expressible: fasthttp treats any value <= 0 as
+// "use the 4 MB default", which would silently reject real policy PDFs. So
+// "unlimited" is implemented as the largest value that fits in an int on
+// every platform, ~2 GiB, which is far beyond any plausible policy document.
 const UnlimitedBodyLimit = math.MaxInt32
 
 // AppConfig holds process-level settings.
@@ -47,7 +47,7 @@ type AppConfig struct {
 	ReadTimeout    time.Duration
 	WriteTimeout   time.Duration
 
-	// SettingsCacheTTL bounds how stale a read of the F4 dynamic parameters may
+	// SettingsCacheTTL bounds how stale a read of the dynamic parameters may
 	// be (models.ConfigParams, service.SettingService).
 	//
 	// It is here rather than among those parameters themselves because it is a
@@ -115,20 +115,20 @@ type AuthConfig struct {
 
 // StorageConfig selects and configures the file stores.
 //
-// Two buckets, not one. F2's policy documents are operator uploads; F5's
-// coordinated-network reports are generated evidence about named accounts, and
-// they are downloaded by a browser rather than read by the server. Keeping them
-// apart means the access policy on the evidence bucket can be tightened —
-// or its objects purged on a retention schedule — without touching the
-// documents an operator uploaded, which have neither property.
+// Two buckets, not one. Policy documents are operator uploads; coordinated-
+// network reports are generated evidence about named accounts, and they are
+// downloaded by a browser rather than read by the server. Keeping them apart
+// means the access policy on the evidence bucket can be tightened — or its
+// objects purged on a retention schedule — without touching the documents an
+// operator uploaded, which have neither property.
 type StorageConfig struct {
 	Driver string // supabase | local
 
 	SupabaseURL        string
 	SupabaseServiceKey string
-	// SupabaseBucket holds F2 policy documents.
+	// SupabaseBucket holds uploaded policy documents.
 	SupabaseBucket string
-	// SupabaseReportBucket holds F5 generated reports and evidence bundles.
+	// SupabaseReportBucket holds generated coordinated-network reports and evidence bundles.
 	SupabaseReportBucket string
 	SignedURLTTL         time.Duration
 
@@ -138,25 +138,26 @@ type StorageConfig struct {
 // AIConfig describes how to reach the separately-developed AI service.
 type AIConfig struct {
 	// BaseURL is optional. When empty the backend degrades gracefully: policy
-	// matchmaking is left pending and the F4 generator returns 503.
+	// matchmaking is left pending and the claim generator returns 503.
 	BaseURL string
 	APIKey  string
 
-	// Timeout bounds the fast calls: Flow 1's matchmaking hand-off (the AI
+	// Timeout bounds the fast calls: the matchmaking hand-off (the AI
 	// service acks in milliseconds and works in the background) and the
 	// readiness probe.
 	Timeout time.Duration
-	// LongTimeout bounds the calls that do real work inside the request:
-	// Flow 3's claim generation, synthetic ingestion, clustering, and
-	// rescoring. The AI service documents Flow 3 alone at 30-60s of sequential
-	// LLM calls, so reusing Timeout here would fail a normal successful run
-	// while the AI service kept going and committed the claim anyway.
+	// LongTimeout bounds the calls that do real work inside the request: claim
+	// generation, synthetic ingestion, clustering, and rescoring. The AI
+	// service documents claim generation alone at 30-60s of sequential LLM
+	// calls, so reusing Timeout here would fail a normal successful run while
+	// the AI service kept going and committed the claim anyway.
 	LongTimeout time.Duration
 
 	// MatchmakingStaleAfter is how long a policy may sit in
-	// processing_status="processing" before the retry sweep assumes the Flow 2
-	// callback was lost and re-queues it. The AI service never retries its
-	// callback, so this is the only place a dropped result is recovered.
+	// processing_status="processing" before the retry sweep assumes the
+	// matchmaking callback was lost and re-queues it. The AI service never
+	// retries its callback, so this is the only place a dropped result is
+	// recovered.
 	MatchmakingStaleAfter time.Duration
 
 	// MatchmakingMaxAttempts caps how many times one policy's matchmaking is
@@ -173,8 +174,9 @@ type AIConfig struct {
 	// they belong to.
 
 	// CallbackBaseURL is this backend's externally reachable base URL, sent to
-	// the AI service as `callback_url` on Flow 1. Optional: when empty the
-	// field is omitted and the AI service falls back to its own BACKEND_URL.
+	// the AI service as `callback_url` on the matchmaking hand-off. Optional:
+	// when empty the field is omitted and the AI service falls back to its own
+	// BACKEND_URL.
 	CallbackBaseURL string
 }
 
@@ -190,29 +192,29 @@ func (a AIConfig) Enabled() bool { return a.BaseURL != "" }
 // PUT /api/v1/policies/:id/status.
 type CronConfig struct {
 	Enabled bool
-	// ScoreSnapshotSpec drives the F3 chart history. It captures the scores the
-	// AI pipeline has already computed; it does not trigger a rescore, because
-	// every path that changes a score already recomputes it. See
+	// ScoreSnapshotSpec drives the score-history chart. It captures the scores
+	// the AI pipeline has already computed; it does not trigger a rescore,
+	// because every path that changes a score already recomputes it. See
 	// scheduler.runScoreSnapshot.
 	ScoreSnapshotSpec string
 	// MatchmakingRetrySpec re-queues matchmaking jobs that failed or whose
-	// Flow 2 callback never arrived. It runs far more often than the daily
+	// callback never arrived. It runs far more often than the daily
 	// jobs: a policy stranded on "Processing" shows a spinning badge and empty
 	// claim lists until it is re-queued, so waiting until the next day to
 	// notice is not acceptable.
 	MatchmakingRetrySpec string
-	// DetectionSpec is how often the F5 detection tick fires. It is NOT the
-	// detection cadence: PRD 10.5.8 makes that a detector setting an admin
+	// DetectionSpec is how often the coordinated-network detection tick fires.
+	// It is NOT the detection cadence: that is a detector setting an admin
 	// edits at runtime (1-24 h), and a cron spec is fixed when the scheduler
 	// starts. So the tick runs at the finest cadence the setting allows —
 	// hourly — and DetectionService.RunScheduled decides whether the tick is
 	// due. The velocity trigger rides the same tick, since a growth spike is
 	// worth noticing on the same granularity.
 	DetectionSpec string
-	// SnapshotRetentionSpec drives the PRD 10.9.1 rule 7 purge of expired
-	// evidence snapshots. Daily and off-peak: it is a deletion sweep with a
-	// 24-month default horizon, so nothing about it is urgent, and it hands
-	// work to the AI service that should not compete with a detection run.
+	// SnapshotRetentionSpec drives the purge of expired evidence snapshots.
+	// Daily and off-peak: it is a deletion sweep with a 24-month default
+	// horizon, so nothing about it is urgent, and it hands work to the AI
+	// service that should not compete with a detection run.
 	SnapshotRetentionSpec string
 }
 

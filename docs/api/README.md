@@ -13,12 +13,12 @@ Documentation is intentionally Markdown, not Swagger/OpenAPI.
 | Health probes | [health.md](health.md) |
 | Authentication | [auth.md](auth.md) |
 | Topics (filter chips) | [topics.md](topics.md) |
-| **F6** Overview | [overview.md](overview.md) |
-| **F1** Claim Repository Bank | [claims.md](claims.md) |
-| **F2** Public Policy Bank | [policies.md](policies.md) |
-| **F3** Alert Page | [alerts.md](alerts.md) |
-| **F4** Admin Settings + utilities | [settings.md](settings.md) |
-| **F5** Coordinated-Network Detector | [networks.md](networks.md) |
+| Overview | [overview.md](overview.md) |
+| Claim Repository Bank | [claims.md](claims.md) |
+| Public Policy Bank | [policies.md](policies.md) |
+| Alert Page | [alerts.md](alerts.md) |
+| Admin Settings + utilities | [settings.md](settings.md) |
+| Coordinated-Network Detector | [networks.md](networks.md) |
 | AI service callbacks | [internal.md](internal.md) |
 
 ---
@@ -82,9 +82,9 @@ Validation failures add per-field `details`:
 | 404 | `NOT_FOUND` | Resource does not exist. |
 | 409 | `CONFLICT` | Email already taken, matchmaking already running. |
 | 413 | `PAYLOAD_TOO_LARGE` | Upload exceeded `APP_BODY_LIMIT_BYTES`. |
-| 422 | `UNPROCESSABLE_ENTITY` | Parsed fine but semantically invalid — bad file format, out-of-range threshold, Synthetic claim sent to F3. |
+| 422 | `UNPROCESSABLE_ENTITY` | Parsed fine but semantically invalid — bad file format, out-of-range threshold, Synthetic claim sent to the Alert page. |
 | 500 | `INTERNAL_ERROR` | Unexpected server fault. Detail is logged, not returned, when `APP_ENV=production`. |
-| 503 | `SERVICE_UNAVAILABLE` | A dependency is unreachable or unconfigured (AI service, database), or the F5 detection pipeline has not been deployed. |
+| 503 | `SERVICE_UNAVAILABLE` | A dependency is unreachable or unconfigured (AI service, database), or the coordinated-network detection pipeline has not been deployed. |
 
 ## Authentication
 
@@ -96,11 +96,10 @@ Authorization: Bearer <access_token>
 ```
 
 There are **no roles**: any authenticated user may call every endpoint,
-including the F4 admin settings, the F5 detector parameters, the allowlist, and
-the export audit log. That is a decision, not an oversight — the PRD defines no
-user or role model, and "As an admin" is story voice. The audit property these
-surfaces need comes from **attribution**: every change records who made it and
-why. See `docs/local_docs/PRD-v1.4.md` 3.3.
+including the admin settings, the detector parameters, the allowlist, and the
+export audit log. That is a decision, not an oversight — there is no user or
+role model to enforce. The audit property these surfaces need comes from
+**attribution**: every change records who made it and why.
 
 The `/api/v1/internal/*` routes are machine-to-machine callbacks from the AI
 service and do not take an operator Bearer token; see [internal.md](internal.md).
@@ -119,18 +118,18 @@ Out-of-range values are silently clamped rather than rejected.
 | Param | Applies to | Format |
 |---|---|---|
 | `status` | claims | `all` (default), `unreviewed`, `active`, `inactive`, `action_taken` |
-| `topic_ids` | claims | Comma-separated UUIDs. `all` is ignored. Multi-select per US6/US15. |
+| `topic_ids` | claims | Comma-separated UUIDs. `all` is ignored. Multi-select. |
 | `type` | claims | `existing`, `non_existing`, `all`. Aliases `generic` / `synthetic` accepted. |
 | `q` | claims, policies, alerts | Free-text search. `%` and `_` are escaped, so they match literally. |
-| `years` | policies | Comma-separated 4-digit years (US34). |
+| `years` | policies | Comma-separated 4-digit years. |
 | `granularity` | charts | `day`, `week` (default), `month`, `year`. |
 | `confidence` | networks | Comma-separated bands: `low`, `medium`, `high`. |
-| `show_low_confidence` | networks | `true` / `false` (default). US43's toggle; Low networks are never reachable from F1. |
+| `show_low_confidence` | networks | `true` / `false` (default). Low networks are never reachable from the Claim Repository Bank. |
 | `sort` | networks | `score` (default), `detected_at`, `accounts`, `posts`, `recurrences`. |
 
 ## Timestamps and scores
 
 - All timestamps are RFC 3339. The server operates in UTC.
-- All PRD Section 6 scores are on a fixed **0–100** scale, except `npr` (0–1)
+- All Claim Scoring System scores are on a fixed **0–100** scale, except `npr` (0–1)
   and `discount_factor` (0.5–1). Values are clamped defensively on read.
 - A `null` score means the AI service has not computed it yet — not zero.

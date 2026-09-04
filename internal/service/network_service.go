@@ -21,10 +21,10 @@ import (
 	"github.com/cis/cis-backend/internal/repository"
 )
 
-// NetworkService assembles the F5 Coordinated-Network Detector payloads.
+// NetworkService assembles the Coordinated-Network Detector payloads.
 //
 // It reads what the pipeline detected and owns what humans decide about it: the
-// review workflow (US52). It never computes a coordination score, a confidence
+// review workflow. It never computes a coordination score, a confidence
 // band or a signal breadth — those are the detector's, and recomputing one here
 // would produce a number that disagrees with the PDF it was printed in.
 type NetworkService struct {
@@ -44,7 +44,7 @@ func NewNetworkService(
 	return &NetworkService{networks: networks, claims: claims, policies: policies, settings: settings}
 }
 
-// ListNetworksQuery is the normalized input for the F5 list (US43-US48).
+// ListNetworksQuery is the normalized input for the network list.
 type ListNetworksQuery struct {
 	Status            string
 	ConfidenceBands   []string
@@ -60,7 +60,7 @@ type ListNetworksQuery struct {
 	Limit             int
 }
 
-// NetworkListResponse is the F5 main page payload.
+// NetworkListResponse is the network list page payload.
 type NetworkListResponse struct {
 	Networks     []dto.NetworkCard `json:"networks"`
 	StatusCounts map[string]int64  `json:"status_counts"`
@@ -70,7 +70,7 @@ type NetworkListResponse struct {
 	AppliedSort        string `json:"applied_sort"`
 }
 
-// List returns a page of networks (US43-US48).
+// List returns a page of networks.
 func (s *NetworkService) List(ctx context.Context, q ListNetworksQuery) (*NetworkListResponse, int64, dto.PageParams, error) {
 	page := dto.NormalizePage(q.Page, q.Limit)
 
@@ -130,7 +130,7 @@ func (s *NetworkService) List(ctx context.Context, q ListNetworksQuery) (*Networ
 	}, total, page, nil
 }
 
-// buildNetworkCard converts one row into the US46 card.
+// buildNetworkCard converts one row into a network card.
 func buildNetworkCard(row repository.NetworkRow) dto.NetworkCard {
 	card := dto.NetworkCard{
 		ID:                row.ID.String(),
@@ -185,7 +185,7 @@ func buildClaimRef(row repository.NetworkRow) *dto.NetworkClaimRef {
 	return ref
 }
 
-// Detail builds the US49/US50 network detail page.
+// Detail builds the network detail page.
 func (s *NetworkService) Detail(ctx context.Context, id uuid.UUID) (*dto.NetworkDetail, error) {
 	row, err := s.networks.FindNetworkByID(ctx, id)
 	if err != nil {
@@ -195,16 +195,15 @@ func (s *NetworkService) Detail(ctx context.Context, id uuid.UUID) (*dto.Network
 		return nil, translatePipelineErr(err, "could not load coordinated network")
 	}
 
-	// A suppressed network is not reachable through any listing surface
-	// (PRD 10.6.3 rule 3), and a direct link to one must not become the way
-	// around that. It is refused with the reason stated rather than a bare 404,
-	// because "we suppressed this because your team declared these accounts
-	// legitimate" is information the analyst needs, and a 404 would read as
-	// data loss.
+	// A suppressed network is not reachable through any listing surface, and a
+	// direct link to one must not become the way around that. It is refused
+	// with the reason stated rather than a bare 404, because "we suppressed
+	// this because your team declared these accounts legitimate" is
+	// information the analyst needs, and a 404 would read as data loss.
 	if row.AllowlistSuppressed {
 		return nil, apperr.Forbidden(
 			"this network is suppressed: at least %.0f%% of its members are on the declared-coordination allowlist, "+
-				"so it is not surfaced on any page (PRD 10.6.3)", models.AllowlistSuppressionShare*100)
+				"so it is not surfaced on any page", models.AllowlistSuppressionShare*100)
 	}
 
 	settings, err := s.settings.DetectorSettings(ctx)
@@ -225,9 +224,9 @@ func (s *NetworkService) Detail(ctx context.Context, id uuid.UUID) (*dto.Network
 	detail.LinkedClaims = buildClaimRefs(links)
 
 	// Linked policies resolve transitively through the linked claims: a network
-	// amplifies a claim, and the claim is correlated with policies. US49 links
-	// out to the existing F2 detail pages rather than duplicating any policy UI
-	// inside F5.
+	// amplifies a claim, and the claim is correlated with policies. This links
+	// out to the existing policy detail pages rather than duplicating any
+	// policy UI here.
 	policyIDs, err := s.policyIDsForClaims(ctx, links)
 	if err != nil {
 		return nil, err
@@ -252,9 +251,9 @@ func (s *NetworkService) Detail(ctx context.Context, id uuid.UUID) (*dto.Network
 		detail.Review = review
 	}
 
-	// Prior anchoring claims. PRD 10.5.1: a recurrence inherits a network's
-	// history but not its relevance, and both the detail page and the report
-	// must state the current primary claim AND the prior anchoring claims.
+	// Prior anchoring claims. A recurrence inherits a network's history but not
+	// its relevance, so both the detail page and the report state the current
+	// primary claim AND the prior anchoring claims.
 	if row.ParentNetworkID != nil {
 		chain, err := s.networks.ListRecurrenceChain(ctx, id)
 		if err != nil {
@@ -268,7 +267,7 @@ func (s *NetworkService) Detail(ctx context.Context, id uuid.UUID) (*dto.Network
 }
 
 // buildRunContext copies the run-level facts that change how a network must be
-// read (PRD 10.5.1, 10.6.3 rule 4).
+// read.
 func buildRunContext(row repository.NetworkRow) dto.RunContext {
 	unavailable := []string(row.RunSignalsUnavailable)
 	if unavailable == nil {
@@ -334,10 +333,10 @@ func buildPriorAnchors(chain []repository.AncestorLink) []dto.PriorAnchorRef {
 	return out
 }
 
-// buildWhyFlagged assembles the US50 panel.
+// buildWhyFlagged assembles the "why flagged" panel.
 //
-// Its hard constraint is the same as US23's: the composite score must never be
-// displayed without access to this breakdown. So the panel carries every
+// Its hard constraint: the composite score must never be displayed without
+// access to this breakdown. So the panel carries every
 // metric's score AND its raw counts AND a plain-language method sentence, the
 // confidence rule that was applied, the families that could not be measured,
 // and the claim-relevance block — not a subset chosen for brevity.
@@ -370,9 +369,8 @@ func buildWhyFlagged(
 		}
 		// A metric whose underlying family was unavailable is reported as
 		// unavailable rather than as a score of zero. Conflating "we could not
-		// measure this" with "we measured this and it was nil" is the same
-		// error PRD 10.5.2.4 warns against for missing metadata fields, and it
-		// biases every reading downward.
+		// measure this" with "we measured this and it was nil" biases every
+		// reading downward.
 		for _, family := range meta.Families {
 			for _, missing := range unavailable {
 				if family == missing {
@@ -420,7 +418,7 @@ func buildWhyFlagged(
 	return out
 }
 
-// describeBandRule writes out the condition that produced the band, so US50's
+// describeBandRule writes out the condition that produced the band, so the
 // panel can state it rather than leave a reader to look it up.
 func describeBandRule(row repository.NetworkRow, s models.CISDetectorSettings) string {
 	switch row.ConfidenceBand {
@@ -448,7 +446,7 @@ func labelFamilies(keys []string) []string {
 	return out
 }
 
-// evaluateExportEligibility applies US58's gate and explains the outcome.
+// evaluateExportEligibility applies the export gate and explains the outcome.
 //
 // Written as an ALLOWLIST of statuses plus a band check, both server-side. The
 // natural denylist — "not unreviewed" — would permit exporting a network the
@@ -465,7 +463,7 @@ func evaluateExportEligibility(row repository.NetworkRow) dto.ExportEligibility 
 			return out
 		}
 		out.Reason = "A network cannot be exported while unreviewed. " +
-			"An unreviewed export is an unreviewed accusation (PRD 10.9.1 rule 4)."
+			"An unreviewed export is an unreviewed accusation."
 		return out
 	}
 
@@ -497,7 +495,7 @@ func (s *NetworkService) policyIDsForClaims(ctx context.Context, links []reposit
 	return out, nil
 }
 
-// UpdateStatus records a human's assessment of a network (US52).
+// UpdateStatus records a human's assessment of a network.
 //
 // Three things happen that do not happen for a claim status change:
 //
@@ -505,10 +503,10 @@ func (s *NetworkService) policyIDsForClaims(ctx context.Context, links []reposit
 //     is an evidentiary judgment about real accounts, and one without a stated
 //     reason teaches the allowlist nothing.
 //  2. The change appends to an immutable log rather than overwriting a note.
-//  3. The network's full signal profile is COPIED into that log entry. PRD
-//     10.9.3 requires dismissals to carry their signal profile and to be
-//     reviewable in aggregate; a later run can recompute those scores, so
-//     joining at read time would give a drifting answer.
+//  3. The network's full signal profile is COPIED into that log entry, so
+//     dismissals carry their signal profile and stay reviewable in aggregate;
+//     a later run can recompute those scores, so joining at read time would
+//     give a drifting answer.
 func (s *NetworkService) UpdateStatus(
 	ctx context.Context, id uuid.UUID, req dto.UpdateNetworkStatusRequest, userID *uuid.UUID,
 ) (*dto.NetworkStatusResponse, error) {
@@ -520,7 +518,7 @@ func (s *NetworkService) UpdateStatus(
 	reason := strings.TrimSpace(req.Reason)
 	if len([]rune(reason)) < models.NetworkStatusReasonMinLength {
 		return nil, apperr.Unprocessable(
-			"a reason of at least %d characters is required to change a network's review status (US52)",
+			"a reason of at least %d characters is required to change a network's review status",
 			models.NetworkStatusReasonMinLength)
 	}
 
@@ -570,8 +568,8 @@ func (s *NetworkService) UpdateStatus(
 	return res, nil
 }
 
-// ReviewLog returns a network's status history (US52's record, US59's internal
-// briefing).
+// ReviewLog returns a network's status history, used both for the review
+// record and for the internal-briefing report.
 func (s *NetworkService) ReviewLog(ctx context.Context, id uuid.UUID, limit int) ([]dto.NetworkReviewLogEntry, error) {
 	rows, err := s.networks.ListReviewLog(ctx, id, limit)
 	if err != nil {
@@ -599,7 +597,7 @@ func (s *NetworkService) ReviewLog(ctx context.Context, id uuid.UUID, limit int)
 	return out, nil
 }
 
-// Graph builds the US51 force-directed graph payload.
+// Graph builds the force-directed graph payload.
 func (s *NetworkService) Graph(ctx context.Context, id uuid.UUID) (*dto.NetworkGraph, error) {
 	if err := s.assertVisible(ctx, id); err != nil {
 		return nil, err
@@ -620,8 +618,8 @@ func (s *NetworkService) Graph(ctx context.Context, id uuid.UUID) (*dto.NetworkG
 		TotalNodeCount: len(accounts),
 	}
 
-	// Above the legibility limit US51 asks for the k-core rather than the whole
-	// graph, and requires the reduction to be noted. Degree centrality is the
+	// Above the legibility limit, the graph renders the k-core rather than the
+	// whole graph, and the reduction is noted. Degree centrality is the
 	// available proxy for core-ness at this layer: the pipeline computed the
 	// k-core when it built the graph, so what is being trimmed here is the
 	// rendering, not the finding.
@@ -697,7 +695,7 @@ func defaultRole(role string) string {
 	return role
 }
 
-// Timeline builds the US53 burst chart.
+// Timeline builds the burst chart.
 func (s *NetworkService) Timeline(ctx context.Context, id uuid.UUID) (*dto.BurstTimeline, error) {
 	row, err := s.visibleNetwork(ctx, id)
 	if err != nil {
@@ -731,7 +729,7 @@ func (s *NetworkService) Timeline(ctx context.Context, id uuid.UUID) (*dto.Burst
 	return out, nil
 }
 
-// Content builds the US54 representative-content view.
+// Content builds the representative-content view.
 //
 // Rendered entirely from the evidence snapshot and never re-fetched live. That
 // is not an optimisation: operators delete their own content once a campaign
@@ -788,8 +786,7 @@ func (s *NetworkService) Content(ctx context.Context, id uuid.UUID) (*dto.Repres
 		out.Groups = append(out.Groups, *g)
 	}
 
-	// Largest groups first: US54 asks for "the top duplicate groups", and the
-	// size of a group is what makes it representative.
+	// Largest groups first: the size of a group is what makes it representative.
 	sort.SliceStable(out.Groups, func(i, j int) bool {
 		return out.Groups[i].VariantCount > out.Groups[j].VariantCount
 	})
@@ -815,7 +812,7 @@ func buildEvidencePost(p repository.EvidencePostRow) dto.EvidencePost {
 	}
 }
 
-// AccountsQuery is the normalized input for the US55 annex.
+// AccountsQuery is the normalized input for the account annex.
 type AccountsQuery struct {
 	Role   string
 	Search string
@@ -824,7 +821,7 @@ type AccountsQuery struct {
 	Limit  int
 }
 
-// Accounts returns a page of the account annex (US55).
+// Accounts returns a page of the account annex.
 func (s *NetworkService) Accounts(
 	ctx context.Context, id uuid.UUID, q AccountsQuery,
 ) ([]dto.AccountAnnexRow, int64, dto.PageParams, error) {
@@ -868,7 +865,7 @@ func buildAnnexRow(r repository.NetworkAccountRow) dto.AccountAnnexRow {
 }
 
 // AccountDrawer returns one account's posts and the specific edges that
-// connected it to the network (US55).
+// connected it to the network.
 //
 // This endpoint is the implementation of a single sentence: "No account may
 // appear in a network without a viewable reason." Everything it returns is that
@@ -916,9 +913,9 @@ func (s *NetworkService) AccountDrawer(ctx context.Context, networkID, accountID
 // explainMembership renders the account's inclusion in words.
 //
 // Deliberately phrased as observed behaviour rather than as a verdict: "shares
-// N behavioural edges" and never "is part of a bot network". PRD 10.9.1 rule 3
-// makes that a hard rule, and the place it is most tempting to break is exactly
-// here, where a reader is asking why one specific account was included.
+// N behavioural edges" and never "is part of a bot network". That is a hard
+// rule, and the place it is most tempting to break is exactly here, where a
+// reader is asking why one specific account was included.
 func explainMembership(handle string, edges []repository.EdgeRow) string {
 	if len(edges) == 0 {
 		return fmt.Sprintf(
@@ -962,7 +959,7 @@ func explainMembership(handle string, edges []repository.EdgeRow) string {
 		handle, len(edges), strings.Join(parts, "; "))
 }
 
-// AccountsCSV streams the US57 export of the account annex.
+// AccountsCSV streams a CSV export of the account annex.
 //
 // The header carries network id, detection run id and export timestamp
 // alongside the displayed columns, because a CSV that leaves the platform has
@@ -1056,10 +1053,10 @@ func (s *NetworkService) assertVisible(ctx context.Context, id uuid.UUID) error 
 
 // translatePipelineErr converts a repository error into the right HTTP shape.
 //
-// A missing detector table is a 503 with an explanation, not a 500: the F5
-// tables are provisioned by the AI service, so on a deployment where the
-// pipeline has not shipped, "not available yet" is the accurate answer and a
-// stack trace is not.
+// A missing detector table is a 503 with an explanation, not a 500: the
+// detection tables are provisioned by the AI service, so on a deployment
+// where the pipeline has not shipped, "not available yet" is the accurate
+// answer and a stack trace is not.
 func translatePipelineErr(err error, message string) error {
 	if errors.Is(err, repository.ErrPipelineUnavailable) {
 		return apperr.Unavailable(

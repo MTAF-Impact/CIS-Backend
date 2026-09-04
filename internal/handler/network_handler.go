@@ -15,7 +15,7 @@ import (
 	"github.com/cis/cis-backend/internal/service"
 )
 
-// NetworkHandler serves F5, the Coordinated-Network Detector.
+// NetworkHandler serves the Coordinated-Network Detector endpoints.
 type NetworkHandler struct {
 	networks *service.NetworkService
 	reports  *service.ReportService
@@ -26,7 +26,7 @@ func NewNetworkHandler(networks *service.NetworkService, reports *service.Report
 	return &NetworkHandler{networks: networks, reports: reports}
 }
 
-// List handles GET /api/v1/networks — the F5 main page (US43-US48).
+// List handles GET /api/v1/networks, the coordinated-network list page.
 func (h *NetworkHandler) List(c *fiber.Ctx) error {
 	claimIDs, err := parseUUIDList(c.Query("claim_ids"))
 	if err != nil {
@@ -53,9 +53,9 @@ func (h *NetworkHandler) List(c *fiber.Ctx) error {
 	res, total, page, err := h.networks.List(c.UserContext(), service.ListNetworksQuery{
 		Status:          c.Query("status"),
 		ConfidenceBands: splitCSV(c.Query("confidence")),
-		// US43's "Show low-confidence networks" toggle, default off. Low
-		// networks are de-emphasised and labelled when revealed; they are never
-		// reachable from F1 at all (PRD 10.6.3 rule 5).
+		// "Show low-confidence networks" toggle, default off. Low networks are
+		// de-emphasised and labelled when revealed; they are never reachable
+		// from the claims list at all.
 		ShowLowConfidence: c.QueryBool("show_low_confidence", false),
 		ClaimIDs:          claimIDs,
 		TopicIDs:          topicIDs,
@@ -73,7 +73,7 @@ func (h *NetworkHandler) List(c *fiber.Ctx) error {
 	return response.List(c, "coordinated networks", res, response.NewMeta(page.Page, page.Limit, total))
 }
 
-// Detail handles GET /api/v1/networks/:id (US49, US50).
+// Detail handles GET /api/v1/networks/:id.
 func (h *NetworkHandler) Detail(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -87,7 +87,7 @@ func (h *NetworkHandler) Detail(c *fiber.Ctx) error {
 	return response.OK(c, "coordinated network detail", detail)
 }
 
-// UpdateStatus handles PUT /api/v1/networks/:id/status (US52).
+// UpdateStatus handles PUT /api/v1/networks/:id/status.
 func (h *NetworkHandler) UpdateStatus(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -109,7 +109,7 @@ func (h *NetworkHandler) UpdateStatus(c *fiber.Ctx) error {
 	return response.OK(c, "network review status updated", res)
 }
 
-// ReviewLog handles GET /api/v1/networks/:id/review-log (US52).
+// ReviewLog handles GET /api/v1/networks/:id/review-log.
 func (h *NetworkHandler) ReviewLog(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -123,7 +123,7 @@ func (h *NetworkHandler) ReviewLog(c *fiber.Ctx) error {
 	return response.OK(c, "network review log", entries)
 }
 
-// Graph handles GET /api/v1/networks/:id/graph (US51).
+// Graph handles GET /api/v1/networks/:id/graph.
 func (h *NetworkHandler) Graph(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -137,7 +137,7 @@ func (h *NetworkHandler) Graph(c *fiber.Ctx) error {
 	return response.OK(c, "network graph", graph)
 }
 
-// Timeline handles GET /api/v1/networks/:id/timeline (US53).
+// Timeline handles GET /api/v1/networks/:id/timeline.
 func (h *NetworkHandler) Timeline(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -151,7 +151,7 @@ func (h *NetworkHandler) Timeline(c *fiber.Ctx) error {
 	return response.OK(c, "network burst timeline", timeline)
 }
 
-// Content handles GET /api/v1/networks/:id/content (US54).
+// Content handles GET /api/v1/networks/:id/content.
 func (h *NetworkHandler) Content(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -165,7 +165,7 @@ func (h *NetworkHandler) Content(c *fiber.Ctx) error {
 	return response.OK(c, "representative content", content)
 }
 
-// Accounts handles GET /api/v1/networks/:id/accounts (US55).
+// Accounts handles GET /api/v1/networks/:id/accounts.
 func (h *NetworkHandler) Accounts(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -185,7 +185,7 @@ func (h *NetworkHandler) Accounts(c *fiber.Ctx) error {
 	return response.List(c, "network account annex", rows, response.NewMeta(page.Page, page.Limit, total))
 }
 
-// AccountDrawer handles GET /api/v1/networks/:id/accounts/:accountId (US55).
+// AccountDrawer handles GET /api/v1/networks/:id/accounts/:accountId.
 //
 // The endpoint behind "No account may appear in a network without a viewable
 // reason": it returns that account's posts and the specific edges, with their
@@ -207,7 +207,7 @@ func (h *NetworkHandler) AccountDrawer(c *fiber.Ctx) error {
 	return response.OK(c, "account detail", drawer)
 }
 
-// AccountsCSV handles GET /api/v1/networks/:id/accounts.csv (US57).
+// AccountsCSV handles GET /api/v1/networks/:id/accounts.csv.
 //
 // The download is written straight to the response and the export is recorded
 // in the audit log first. Recording first is the same ordering choice the report
@@ -235,7 +235,7 @@ func (h *NetworkHandler) AccountsCSV(c *fiber.Ctx) error {
 	return c.SendString(buf.String())
 }
 
-// GenerateReport handles POST /api/v1/networks/:id/reports (US58, US59).
+// GenerateReport handles POST /api/v1/networks/:id/reports.
 func (h *NetworkHandler) GenerateReport(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -259,7 +259,7 @@ func (h *NetworkHandler) GenerateReport(c *fiber.Ctx) error {
 	return response.Created(c, "report generated", view)
 }
 
-// ListReports handles GET /api/v1/networks/:id/reports (US58).
+// ListReports handles GET /api/v1/networks/:id/reports.
 func (h *NetworkHandler) ListReports(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -273,7 +273,7 @@ func (h *NetworkHandler) ListReports(c *fiber.Ctx) error {
 	return response.OK(c, "generated reports", views)
 }
 
-// EvidenceBundle handles POST /api/v1/networks/:id/evidence-bundle (US60).
+// EvidenceBundle handles POST /api/v1/networks/:id/evidence-bundle.
 func (h *NetworkHandler) EvidenceBundle(c *fiber.Ctx) error {
 	id, err := parsePathUUID(c, "id")
 	if err != nil {
@@ -297,7 +297,7 @@ func (h *NetworkHandler) EvidenceBundle(c *fiber.Ctx) error {
 	return response.Created(c, "evidence bundle generated", view)
 }
 
-// DownloadReport handles GET /api/v1/reports/:reportId/file (US58).
+// DownloadReport handles GET /api/v1/reports/:reportId/file.
 //
 // The artefact lives in Supabase Storage, so by default this redirects to a
 // time-limited signed URL and the bytes never transit this server.
@@ -381,8 +381,7 @@ func splitCSV(raw string) []string {
 	return out
 }
 
-// DetectionHandler serves the detection-run and recalibration endpoints
-// (PRD 10.5.8, 10.5.1a, 10.9.3).
+// DetectionHandler serves the detection-run and recalibration endpoints.
 type DetectionHandler struct {
 	detection *service.DetectionService
 	reports   *service.ReportService
@@ -393,10 +392,10 @@ func NewDetectionHandler(detection *service.DetectionService, reports *service.R
 	return &DetectionHandler{detection: detection, reports: reports}
 }
 
-// Trigger handles POST /api/v1/admin/detection-runs (PRD 10.5.8 item 3).
+// Trigger handles POST /api/v1/admin/detection-runs.
 //
-// Rejects Synthetic claims with a 400: PRD 10.3 puts detection over S2 out of
-// scope because a predicted claim has no real posts to cluster.
+// Rejects Synthetic claims with a 400: a predicted claim has no real posts to
+// cluster.
 func (h *DetectionHandler) Trigger(c *fiber.Ctx) error {
 	var req dto.TriggerDetectionRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -439,8 +438,8 @@ func (h *DetectionHandler) Run(c *fiber.Ctx) error {
 // ListRuns handles GET /api/v1/detection-runs.
 //
 // Exists because truncation and unavailable signal families are run-level facts
-// that cap confidence for every network in a run (PRD 10.6.3 rule 4): "why is
-// everything Medium this week?" is a question about runs.
+// that cap confidence for every network in a run: "why is everything Medium
+// this week?" is a question about runs.
 func (h *DetectionHandler) ListRuns(c *fiber.Ctx) error {
 	from, err := parseOptionalTime(c.Query("from"))
 	if err != nil {
@@ -464,7 +463,7 @@ func (h *DetectionHandler) ListRuns(c *fiber.Ctx) error {
 	return response.List(c, "detection runs", views, response.NewMeta(page.Page, page.Limit, total))
 }
 
-// OfftopicClusters handles GET /api/v1/admin/offtopic-clusters (US62).
+// OfftopicClusters handles GET /api/v1/admin/offtopic-clusters.
 func (h *DetectionHandler) OfftopicClusters(c *fiber.Ctx) error {
 	filter := repository.OfftopicFilter{FailedTest: c.Query("failed_test")}
 
@@ -501,7 +500,7 @@ func (h *DetectionHandler) OfftopicClusters(c *fiber.Ctx) error {
 	return response.List(c, "off-topic coordinated clusters", views, response.NewMeta(page.Page, page.Limit, total))
 }
 
-// OfftopicRates handles GET /api/v1/admin/offtopic-clusters/rates (US62).
+// OfftopicRates handles GET /api/v1/admin/offtopic-clusters/rates.
 func (h *DetectionHandler) OfftopicRates(c *fiber.Ctx) error {
 	rates, err := h.detection.OfftopicRates(c.UserContext(), c.QueryInt("limit", 30))
 	if err != nil {
@@ -510,7 +509,7 @@ func (h *DetectionHandler) OfftopicRates(c *fiber.Ctx) error {
 	return response.OK(c, "off-topic rates per run", rates)
 }
 
-// Dismissals handles GET /api/v1/admin/dismissals (PRD 10.9.3).
+// Dismissals handles GET /api/v1/admin/dismissals.
 func (h *DetectionHandler) Dismissals(c *fiber.Ctx) error {
 	from, err := parseOptionalTime(c.Query("from"))
 	if err != nil {
@@ -529,10 +528,10 @@ func (h *DetectionHandler) Dismissals(c *fiber.Ctx) error {
 	return response.List(c, "false-positive dismissals", views, response.NewMeta(page.Page, page.Limit, total))
 }
 
-// DismissalSummary handles GET /api/v1/admin/dismissals/summary (PRD 10.9.3).
+// DismissalSummary handles GET /api/v1/admin/dismissals/summary.
 //
 // The aggregate that decides whether beta_k or the thresholds need
-// recalibrating, plus the precision figure the PRD sets a target on.
+// recalibrating, plus the precision figure tracked against its target.
 func (h *DetectionHandler) DismissalSummary(c *fiber.Ctx) error {
 	summary, err := h.detection.DismissalSummary(c.UserContext(), c.QueryInt("window_days", 90))
 	if err != nil {
@@ -541,7 +540,7 @@ func (h *DetectionHandler) DismissalSummary(c *fiber.Ctx) error {
 	return response.OK(c, "dismissal summary", summary)
 }
 
-// AuditLog handles GET /api/v1/admin/export-audit (US64).
+// AuditLog handles GET /api/v1/admin/export-audit.
 func (h *DetectionHandler) AuditLog(c *fiber.Ctx) error {
 	filter := repository.AuditFilter{ExportType: c.Query("export_type")}
 

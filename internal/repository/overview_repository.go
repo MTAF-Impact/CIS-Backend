@@ -12,25 +12,24 @@ import (
 	"github.com/cis/cis-backend/internal/models"
 )
 
-// OverviewRepository reads the aggregates behind F6, the Overview page
-// (PRD v1.5, Section 11).
+// OverviewRepository reads the aggregates behind the Overview page.
 //
 // Every query here is a read over AI-owned tables. Nothing on this page is
 // stored: the ratio, the treemap and the leaderboard are derived from the
 // current claim table on each request, and the Climate Sentiment Index is
 // derived from the content stream. Materialising them would introduce a second
-// number that could disagree with F1's own ranking.
+// number that could disagree with the claim repository's own ranking.
 //
 // # Capability probing
 //
-// PRD v1.5 needs two columns on content_items that v1.4's schema does not have:
-// `sentiment`, without which BCS cannot be computed at all, and `city`, without
-// which US65's city selection cannot partition anything. Both are AI-owned, so
-// this backend cannot add them. Rather than fail every F6 request on a
-// database where the AI service has not shipped them yet, their presence is
-// probed once at construction and the queries adapt: O1 reports
+// The Overview page needs two columns on content_items that older schemas do
+// not have: `sentiment`, without which BCS cannot be computed at all, and
+// `city`, without which the city selection cannot partition anything. Both are
+// AI-owned, so this backend cannot add them. Rather than fail every request on
+// a database where the AI service has not shipped them yet, their presence is
+// probed once at construction and the queries adapt: the gauge reports
 // insufficient_data, and city scoping degrades to the whole instance — which is
-// what the single-city deployment model of PRD 6.6.4 means in practice anyway.
+// what the single-city deployment model means in practice anyway.
 type OverviewRepository struct {
 	db *gorm.DB
 
@@ -43,7 +42,7 @@ type OverviewRepository struct {
 }
 
 // NewOverviewRepository constructs an OverviewRepository, probing for the
-// PRD v1.5 columns on content_items.
+// optional columns on content_items.
 func NewOverviewRepository(db *gorm.DB) *OverviewRepository {
 	r := &OverviewRepository{db: db}
 	if db.Migrator().HasTable("content_items") {
@@ -54,27 +53,28 @@ func NewOverviewRepository(db *gorm.DB) *OverviewRepository {
 }
 
 // HasSentiment reports whether content_items carries the sentiment column the
-// Climate Sentiment Index needs (PRD 6.6.1).
+// Climate Sentiment Index needs.
 func (r *OverviewRepository) HasSentiment() bool { return r.hasSentiment }
 
 // HasCity reports whether content_items is tagged with a city, and so whether
-// the US65 selection actually partitions the data or only labels it.
+// the city selection actually partitions the data or only labels it.
 func (r *OverviewRepository) HasCity() bool { return r.hasCity }
 
-// ThresholdCounts is the O1 above/below-threshold split (US67).
+// ThresholdCounts is the above/below-threshold split shown on the Overview
+// page.
 type ThresholdCounts struct {
 	Above int64 `gorm:"column:above"`
 	Below int64 `gorm:"column:below"`
 	Total int64 `gorm:"column:total"`
 }
 
-// ThresholdCounts counts Existing/Generic claims either side of the F4
-// threshold (US67).
+// ThresholdCounts counts Existing/Generic claims either side of the global
+// alert threshold.
 //
-// Every S1 claim is counted regardless of review status, per the assumption
-// US67 flags: the ratio is a picture of the information environment, not of the
-// team's triage queue, and excluding Inactive or Action Taken claims would make
-// the number improve whenever someone closed a ticket.
+// Every claim is counted regardless of review status: the ratio is a picture
+// of the information environment, not of the team's triage queue, and
+// excluding Inactive or Action Taken claims would make the number improve
+// whenever someone closed a ticket.
 //
 // A claim with no score counts as below. Escalating on missing data is the one
 // direction that cannot be justified to a reviewer.
@@ -91,7 +91,7 @@ func (r *OverviewRepository) ThresholdCounts(ctx context.Context, city string, t
 	return out, err
 }
 
-// TopicAggregate is one rectangle of the O2 treemap (US69).
+// TopicAggregate is one rectangle of the topic treemap.
 type TopicAggregate struct {
 	TopicID    uuid.UUID `gorm:"column:topic_id"`
 	TopicName  string    `gorm:"column:topic_name"`
@@ -100,9 +100,9 @@ type TopicAggregate struct {
 	AvgScore   *float64  `gorm:"column:avg_score"`
 }
 
-// TopicAggregates returns per-topic claim counts and average score (US69).
+// TopicAggregates returns per-topic claim counts and average score.
 //
-// Existing/Generic topics only: US69 excludes Synthetic-claim topics, because a
+// Existing/Generic topics only: Synthetic-claim topics are excluded, because a
 // treemap sized by predicted claims would compete for attention with one sized
 // by claims that actually exist.
 func (r *OverviewRepository) TopicAggregates(ctx context.Context, city string, threshold float64) ([]TopicAggregate, error) {
@@ -120,7 +120,8 @@ func (r *OverviewRepository) TopicAggregates(ctx context.Context, city string, t
 	return out, err
 }
 
-// TopicAggregate returns one topic's aggregate, for the O2 click-through modal.
+// TopicAggregate returns one topic's aggregate, for the treemap's click-through
+// modal.
 func (r *OverviewRepository) TopicAggregate(ctx context.Context, city string, topicID uuid.UUID, threshold float64) (*TopicAggregate, error) {
 	var out TopicAggregate
 	err := r.claimScope(ctx, city).
@@ -143,7 +144,7 @@ func (r *OverviewRepository) TopicAggregate(ctx context.Context, city string, to
 	return &out, nil
 }
 
-// PolicyAggregate is one row of the O3 leaderboard (US70).
+// PolicyAggregate is one row of the policy leaderboard.
 type PolicyAggregate struct {
 	AIPolicyID uuid.UUID `gorm:"column:policy_id"`
 	ClaimCount int64     `gorm:"column:claim_count"`
@@ -151,14 +152,13 @@ type PolicyAggregate struct {
 	AvgScore   *float64  `gorm:"column:avg_score"`
 }
 
-// PolicyAggregates returns per-policy claim counts and average score (US70).
+// PolicyAggregates returns per-policy claim counts and average score.
 //
-// A claim reaches a policy two ways: the many-to-many join table (US12) and the
-// direct claims.policy_id column (US20). Both are read, and the UNION
-// deduplicates a claim linked both ways so it is never counted twice.
+// A claim reaches a policy two ways: the many-to-many join table and the
+// direct claims.policy_id column. Both are read, and the UNION deduplicates a
+// claim linked both ways so it is never counted twice.
 //
-// Only Existing/Generic claims are counted, per US70's "correlated
-// Existing-claims" — claimScope applies that filter.
+// Only Existing/Generic claims are counted; claimScope applies that filter.
 func (r *OverviewRepository) PolicyAggregates(ctx context.Context, city string, threshold float64) ([]PolicyAggregate, error) {
 	var out []PolicyAggregate
 	err := r.claimScope(ctx, city).
@@ -177,7 +177,7 @@ func (r *OverviewRepository) PolicyAggregates(ctx context.Context, city string, 
 	return out, err
 }
 
-// ConversationVolumes is the BCS numerator and denominator (PRD 6.6.1).
+// ConversationVolumes is the BCS numerator and denominator.
 type ConversationVolumes struct {
 	Total    int64 `gorm:"column:total"`
 	Positive int64 `gorm:"column:positive"`
@@ -185,14 +185,12 @@ type ConversationVolumes struct {
 	Neutral  int64 `gorm:"column:neutral"`
 }
 
-// ConversationVolumes counts climate conversation by sentiment over a window
-// (PRD 6.6.1).
+// ConversationVolumes counts climate conversation by sentiment over a window.
 //
 // The denominator is every content item in the window, whether or not it was
-// ever clustered into a claim — PRD 6.6.1 is explicit that
-// TotalClimateConversationVolume is "independent of the claim repository", and
-// counting only clustered content would make the index improve every time the
-// pipeline failed to cluster something.
+// ever clustered into a claim — TotalClimateConversationVolume is independent
+// of the claim repository, and counting only clustered content would make the
+// index improve every time the pipeline failed to cluster something.
 //
 // Returns a zero struct when the sentiment column is absent; callers surface
 // that as insufficient_data.
@@ -213,12 +211,12 @@ func (r *OverviewRepository) ConversationVolumes(ctx context.Context, city strin
 }
 
 // WeightedRiskScore returns Σ(FinalClaimScore × Volume) over claims scoring at
-// or above the risk threshold (PRD 6.6.2).
+// or above the risk threshold.
 //
 // Volume is the claim's combined Supporting-plus-Opposing conversation in the
-// window. Neutral content is excluded because PRD 6.6.2 defines Volume_i as the
-// two stance sides; it stays in the BCS denominator, where the definition is
-// explicitly "all climate-related content".
+// window. Neutral content is excluded because Volume_i is defined over the two
+// stance sides; it stays in the BCS denominator, which covers all
+// climate-related content.
 func (r *OverviewRepository) WeightedRiskScore(ctx context.Context, city string, from, to time.Time, riskThreshold float64) (float64, error) {
 	volumes := r.contentScope(ctx, city).
 		Select("claim_id, COUNT(*) AS volume").
@@ -241,7 +239,7 @@ func (r *OverviewRepository) WeightedRiskScore(ctx context.Context, city string,
 }
 
 // TopicScoreAverage is a topic's mean FinalClaimScore over a snapshot window,
-// used for the O2 modal's month-on-month change (US69).
+// used for the topic modal's month-on-month change.
 //
 // It reads the AI service's claim_score_snapshots, which records a row per
 // rescore for every claim, rather than the backend's own table, which only
@@ -270,7 +268,7 @@ func (r *OverviewRepository) TopicScoreAverage(ctx context.Context, topicID uuid
 	return avg, nil
 }
 
-// claimScope is the shared FROM/WHERE for every claim-side F6 aggregate:
+// claimScope is the shared FROM/WHERE for every claim-side Overview aggregate:
 // Existing/Generic claims, narrowed to the configured city where the data
 // supports it.
 func (r *OverviewRepository) claimScope(ctx context.Context, city string) *gorm.DB {
@@ -280,8 +278,8 @@ func (r *OverviewRepository) claimScope(ctx context.Context, city string) *gorm.
 
 	// A claim belongs to the configured city when any of the content backing it
 	// does. Without a city column on content_items there is no city dimension
-	// anywhere in the AI schema, so the instance is the scope — which is the
-	// single-city deployment PRD 6.6.4 describes.
+	// anywhere in the AI schema, so the instance is the scope — which matches
+	// the single-city deployment model.
 	if r.hasCity && city != "" {
 		q = q.Where(
 			"EXISTS (SELECT 1 FROM content_items ci WHERE ci.claim_id = c.id AND ci.city = ?)",
@@ -300,7 +298,8 @@ func (r *OverviewRepository) contentScope(ctx context.Context, city string) *gor
 }
 
 // errIsPipelineUnavailable reports whether an error is a missing AI-owned
-// relation, reusing the classifier the F5 repository already defines.
+// relation, reusing the classifier the coordinated-network repository already
+// defines.
 func errIsPipelineUnavailable(err error) bool {
 	return errors.Is(classify(err), ErrPipelineUnavailable)
 }

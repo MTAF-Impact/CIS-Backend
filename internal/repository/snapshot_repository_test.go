@@ -82,8 +82,8 @@ func TestMergeBucketsOrdersChronologically(t *testing.T) {
 	}
 }
 
-// TestMergeBucketsKeepsClaimsSeparate checks the F3 chart's multi-claim series
-// are not collapsed into one line by the bucket key.
+// TestMergeBucketsKeepsClaimsSeparate checks the score history chart's
+// multi-claim series are not collapsed into one line by the bucket key.
 func TestMergeBucketsKeepsClaimsSeparate(t *testing.T) {
 	first, second := uuid.New(), uuid.New()
 	bucket := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)

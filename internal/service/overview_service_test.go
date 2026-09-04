@@ -10,7 +10,7 @@ import (
 func ptr(v float64) *float64 { return &v }
 
 // defaultRanking is the configured Overview weighting at its documented
-// defaults, which is what US69 proposes: an equal split between the two halves.
+// defaults: an equal split between the two halves.
 //
 // Read out of the registry rather than written here, so these assertions follow
 // the seeded configuration instead of pinning a second copy of it.
@@ -30,8 +30,8 @@ func registryDefault(key string) float64 {
 }
 
 func TestCombinedMetric(t *testing.T) {
-	// US69's proposed default: normalise each input against the largest value in
-	// the current set, then weight the two 50/50.
+	// The default: normalise each input against the largest value in the
+	// current set, then weight the two 50/50.
 	counts := []int64{10, 5, 0}
 	scores := []*float64{ptr(80), ptr(40), ptr(20)}
 
@@ -103,8 +103,9 @@ func TestPercent(t *testing.T) {
 }
 
 // TestCombinedMetricHonoursConfiguredWeights covers the reason the formula is
-// configurable at all: US69 leaves the weighting open, so a deployment that
-// decides above-threshold count is the whole story must be able to say so.
+// configurable at all: the weighting is deliberately left open, so a
+// deployment that decides above-threshold count is the whole story must be
+// able to say so.
 func TestCombinedMetricHonoursConfiguredWeights(t *testing.T) {
 	countOnly := OverviewRanking{WeightAboveCount: 1, WeightAvgScore: 0}
 

@@ -2,13 +2,13 @@ package dto
 
 import "time"
 
-// Threshold statuses shown in the F3 watchlist (US29).
+// Threshold statuses shown in the watchlist table.
 const (
 	ThresholdOver  = "over_threshold"
 	ThresholdUnder = "under_threshold"
 )
 
-// AlertRow is one row of the [C3] watchlist table (US29).
+// AlertRow is one row of the [C3] watchlist table.
 type AlertRow struct {
 	// ID is the claim id, which the table's ID column displays.
 	ID             string    `json:"id"`
@@ -16,20 +16,20 @@ type AlertRow struct {
 	ClaimStatement string    `json:"claim_statement"`
 	ClaimCreatedAt time.Time `json:"claim_created_at"`
 	AddedAt        time.Time `json:"added_at"`
-	// ChartVisible backs the "Chart" checkbox column (US28).
+	// ChartVisible backs the "Chart" checkbox column.
 	ChartVisible bool      `json:"chart_visible"`
 	Topic        *TopicRef `json:"topic,omitempty"`
 	ReviewStatus string    `json:"review_status"`
 
 	FinalClaimScore *float64 `json:"final_claim_score"`
-	// ThresholdStatus is derived by comparing FinalClaimScore against the F4
-	// global threshold (US29, US32).
+	// ThresholdStatus is derived by comparing FinalClaimScore against the
+	// global threshold.
 	ThresholdStatus string  `json:"threshold_status"`
 	Threshold       float64 `json:"threshold"`
 	IsDormant       bool    `json:"is_dormant"`
 
-	// JustCrossed drives the US29/US71 row highlight: true while this claim's
-	// Over/Under status has flipped since the reader last opened F3. It is
+	// JustCrossed drives the row highlight: true while this claim's Over/Under
+	// status has flipped since the reader last opened the alerts page. It is
 	// per-reader, so one operator acknowledging a crossing does not clear a
 	// colleague's highlight.
 	JustCrossed bool `json:"just_crossed"`
@@ -40,12 +40,12 @@ type AlertRow struct {
 	CrossedAt        *time.Time `json:"crossed_at,omitempty"`
 }
 
-// AlertNotifications is the US71 payload behind the sidebar counter badge.
+// AlertNotifications is the payload behind the sidebar counter badge.
 type AlertNotifications struct {
 	// UnacknowledgedCount is the badge number: watched claims that have crossed
-	// the threshold since this user last opened F3.
+	// the threshold since this user last opened the alerts page.
 	UnacknowledgedCount int64 `json:"unacknowledged_count"`
-	// AcknowledgedAt is when this user last opened F3, null if never.
+	// AcknowledgedAt is when this user last opened the alerts page, null if never.
 	AcknowledgedAt *time.Time `json:"acknowledged_at"`
 	Threshold      float64    `json:"threshold"`
 	// Crossings names the claims behind the count, newest first, so the badge
@@ -54,13 +54,13 @@ type AlertNotifications struct {
 }
 
 // AddAlertRequest is the body of POST /api/v1/alerts, sent after the user
-// confirms the bell-icon dialog (US14).
+// confirms the bell-icon dialog.
 type AddAlertRequest struct {
 	ClaimID string `json:"claim_id" validate:"required,uuid"`
 }
 
 // SetChartVisibilityRequest is the body of
-// PATCH /api/v1/alerts/:claimId/chart (US28).
+// PATCH /api/v1/alerts/:claimId/chart.
 type SetChartVisibilityRequest struct {
 	Visible *bool `json:"visible" validate:"required"`
 }
@@ -81,7 +81,7 @@ type ChartSeries struct {
 	Points         []ScorePoint `json:"points"`
 }
 
-// ChartResponse is the F3 chart payload (US27, US28).
+// ChartResponse is the chart payload.
 //
 // It contains only claims the user has explicitly checked in [C3]; with none
 // checked, Series is empty and the UI shows its empty state.

@@ -13,9 +13,9 @@ import (
 )
 
 // SnapshotRepository maintains cis_claim_score_snapshots, the backend-owned
-// history behind the F3 line chart.
+// history behind the score history line chart.
 //
-// The AI service stores only a claim's *current* score, but US27 plots
+// The AI service stores only a claim's *current* score, but the chart plots
 // FinalClaimScore over time. Copying scores into our own table gives us that
 // history without ever writing to an AI-owned table.
 type SnapshotRepository struct {
@@ -148,8 +148,9 @@ func (r *SnapshotRepository) Series(ctx context.Context, f SeriesFilter) ([]Seri
 
 	aiBuckets, err := r.aggregate(ctx, f, trunc, "claim_score_snapshots", "recorded_at", false)
 	if err != nil {
-		// Never fatal: the backend is designed to serve F1/F3 against a database
-		// where the AI service has not provisioned its tables yet.
+		// Never fatal: the backend is designed to serve the claim list and score
+		// history against a database where the AI service has not provisioned its
+		// tables yet.
 		log.Printf("[snapshots] could not read the AI service's score history, "+
 			"falling back to backend snapshots only: %v", err)
 	} else {

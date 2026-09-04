@@ -28,7 +28,7 @@ import (
 // JWT issuance, and refresh-token rotation.
 //
 // There are no roles by design — any authenticated user may call every
-// endpoint, including the F4 admin settings.
+// endpoint, including the admin settings.
 type AuthService struct {
 	users *repository.UserRepository
 	cfg   config.AuthConfig

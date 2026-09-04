@@ -3,17 +3,17 @@
 //
 // Seven outbound calls exist, all documented in docs/AI-INTEGRATION.md:
 //
-//  1. Matchmaking (PRD US42, Flow 1) — announce a newly uploaded policy so the
-//     AI service can link existing claims and generate synthetic ones.
-//  2. Generate Generic Claim (PRD US33, Flow 3) — the F4 test-data button. The
-//     backend cannot satisfy this itself because it never writes the AI-owned
-//     `claims` table.
-//  3. Confirm harm (Flow 4) — a reviewer's override of the AI harm sub-scores.
-//  4. Rescore (Flow 5) — time-based re-evaluation, without which the F3 trend
-//     chart plots a flat line.
-//  5. Generate synthetic content (Flow 6) — the only way content enters the
-//     databank until a live crawler exists.
-//  6. Cluster now (Flow 6) — force a clustering pass over unclustered content.
+//  1. Matchmaking — announce a newly uploaded policy so the AI service can
+//     link existing claims and generate synthetic ones.
+//  2. Generate Generic Claim — the test-data button on the admin settings
+//     page. The backend cannot satisfy this itself because it never writes
+//     the AI-owned `claims` table.
+//  3. Confirm harm — a reviewer's override of the AI harm sub-scores.
+//  4. Rescore — time-based re-evaluation, without which the trend chart
+//     plots a flat line.
+//  5. Generate synthetic content — the only way content enters the databank
+//     until a live crawler exists.
+//  6. Cluster now — force a clustering pass over unclustered content.
 //  7. Health — a reachability check for /health/ready.
 //
 // Every call degrades gracefully when AI_SERVICE_URL is unset, so the backend
@@ -65,7 +65,7 @@ func New(cfg config.AIConfig) *Client {
 // Enabled reports whether outbound AI calls are configured.
 func (c *Client) Enabled() bool { return c.cfg.Enabled() }
 
-// MatchmakingRequest announces a new policy to the AI service (US42).
+// MatchmakingRequest announces a new policy to the AI service.
 //
 // DocumentURL is a time-limited signed link the AI service can fetch to read
 // the policy text. The backend deliberately does not send file bytes.
@@ -89,9 +89,9 @@ type MatchmakingRequest struct {
 	// should stay cheap to re-report.
 	Force bool `json:"force,omitempty"`
 
-	// CallbackURL is where the AI service reports completion (Flow 2). Sent
-	// only when BACKEND_PUBLIC_URL is configured; otherwise it is omitted and
-	// the AI service falls back to its own BACKEND_URL.
+	// CallbackURL is where the AI service reports completion. Sent only when
+	// BACKEND_PUBLIC_URL is configured; otherwise it is omitted and the AI
+	// service falls back to its own BACKEND_URL.
 	CallbackURL string `json:"callback_url,omitempty"`
 }
 
@@ -124,8 +124,8 @@ func (c *Client) SubmitPolicy(ctx context.Context, req MatchmakingRequest) (*Mat
 	return &out, nil
 }
 
-// CallbackURL builds the Flow 2 callback address for a policy, or "" when
-// BACKEND_PUBLIC_URL is unset.
+// CallbackURL builds the matchmaking-result callback address for a policy, or
+// "" when BACKEND_PUBLIC_URL is unset.
 func (c *Client) CallbackURL(policyID uuid.UUID) string {
 	if c.cfg.CallbackBaseURL == "" {
 		return ""
@@ -134,7 +134,7 @@ func (c *Client) CallbackURL(policyID uuid.UUID) string {
 }
 
 // GenerateClaimRequest asks the AI service to insert one fully-populated
-// Existing/Generic claim for demos and testing (US33).
+// existing/generic claim for demos and testing.
 type GenerateClaimRequest struct {
 	ClaimType string `json:"claim_type"`
 	// TopicID optionally pins the generated claim to an existing topic.
@@ -149,7 +149,7 @@ type GenerateClaimResponse struct {
 	Message        string     `json:"message"`
 }
 
-// GenerateGenericClaim triggers the F4 test-data generator.
+// GenerateGenericClaim triggers the admin settings page's test-data generator.
 func (c *Client) GenerateGenericClaim(ctx context.Context, req GenerateClaimRequest) (*GenerateClaimResponse, error) {
 	if !c.Enabled() {
 		return nil, ErrNotConfigured
@@ -162,7 +162,7 @@ func (c *Client) GenerateGenericClaim(ctx context.Context, req GenerateClaimRequ
 	return &out, nil
 }
 
-// HarmConfirmRequest carries a reviewer's harm sub-score overrides (Flow 4).
+// HarmConfirmRequest carries a reviewer's harm sub-score overrides.
 //
 // Every field is optional and on a 0-100 scale. An omitted field keeps the AI
 // service's own classification; an entirely empty body still flips
@@ -193,7 +193,7 @@ type RescoreResponse struct {
 	ClaimsRescored int `json:"claims_rescored"`
 }
 
-// Rescore triggers a time-based re-evaluation of every existing claim (Flow 5).
+// Rescore triggers a time-based re-evaluation of every existing claim.
 //
 // Necessary because NPR drifts purely from wall-clock time as opposing posts
 // age out of the rolling window, with no new content ingested at all.
@@ -229,8 +229,7 @@ func (c *Client) ClusterNow(ctx context.Context) (*ClusterNowResponse, error) {
 	return &out, nil
 }
 
-// GenerateContentRequest asks the AI service to fabricate sample content
-// (Flow 6).
+// GenerateContentRequest asks the AI service to fabricate sample content.
 //
 // This is the prototype stand-in for a live crawler. AutoCluster is a pointer
 // so "unset" stays distinguishable from an explicit false: the AI service
@@ -395,7 +394,7 @@ func logAICallEnd(method, path string, status int, start time.Time, err error) {
 }
 
 // Timeout exposes the fast-call timeout, used when the caller builds its own
-// background context around a Flow 1 hand-off.
+// background context around a matchmaking hand-off.
 func (c *Client) Timeout() time.Duration { return c.cfg.Timeout }
 
 // LongTimeout exposes the slow-call timeout, used when a caller needs to bound
@@ -403,7 +402,7 @@ func (c *Client) Timeout() time.Duration { return c.cfg.Timeout }
 func (c *Client) LongTimeout() time.Duration { return c.cfg.LongTimeout }
 
 // MatchmakingStaleAfter exposes how long a policy may sit in "processing"
-// before the retry sweep treats its Flow 2 callback as lost.
+// before the retry sweep treats its matchmaking-result callback as lost.
 func (c *Client) MatchmakingStaleAfter() time.Duration { return c.cfg.MatchmakingStaleAfter }
 
 // MatchmakingMaxAttempts exposes how many times one policy's matchmaking may be

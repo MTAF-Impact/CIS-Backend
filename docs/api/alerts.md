@@ -1,29 +1,29 @@
-# F3 — Alert Page
+# Alert Page
 
 All routes require a Bearer token.
 
 The Alert page is the watchlist for claims requiring ongoing monitoring. Its
 layout is a line chart `[C1]`, a key/legend `[C2]`, and the watchlist table
-`[C3]` (US27).
+`[C3]`.
 
-**Only Existing/Generic claims can be watched** (US26). Synthetic claims are
+**Only Existing/Generic claims can be watched.** Synthetic claims are
 predictions that may never materialize, so adding one is rejected with `422`.
 
-Claims can only join the watchlist through the F1 bell-icon confirmation flow
-(US14/US30) — there is deliberately no "add" action inside F3 itself, but that
-flow is served by `POST /api/v1/alerts` below.
+Claims can only join the watchlist through the claim repository's bell-icon
+confirmation flow — there is deliberately no "add" action inside the Alert
+page itself, but that flow is served by `POST /api/v1/alerts` below.
 
 ---
 
 ## GET /api/v1/alerts
 
-The `[C3]` watchlist table (US29).
+The `[C3]` watchlist table.
 
-Ordered by **most recently appended first** (US30).
+Ordered by **most recently appended first**.
 
 | Query | Default | Notes |
 |---|---|---|
-| `q` | — | Search by claim statement (US31) |
+| `q` | — | Search by claim statement |
 | `page`, `limit` | `1`, `20` | |
 
 ```bash
@@ -62,24 +62,24 @@ curl "http://localhost:8080/api/v1/alerts" -H "Authorization: Bearer $TOKEN"
 `id` is the **claim id** — it is what the table's ID column displays and what
 every other endpoint here takes as `:claimId`.
 
-### `threshold_status` (US29)
+### `threshold_status`
 
-Derived by comparing `final_claim_score` against the F4 global threshold
-(US32), which is echoed back as `threshold` so the UI never has to fetch it
+Derived by comparing `final_claim_score` against the global alert threshold,
+which is echoed back as `threshold` so the UI never has to fetch it
 separately:
 
 - `over_threshold` — `final_claim_score >= threshold`
 - `under_threshold` — otherwise, **including when the score is `null`**. An
   unscored claim is not escalated on missing data.
 
-Changing the threshold in F4 immediately changes these values; no recomputation
-is needed. Style `over_threshold` with the controlled low-saturation red noted
-in PRD §5.1, and `under_threshold` with Mint Leaf.
+Changing the global threshold immediately changes these values; no
+recomputation is needed. Style `over_threshold` with the controlled
+low-saturation red, and `under_threshold` with Mint Leaf.
 
-### `just_crossed` (US29, US71) — new in v1.5
+### `just_crossed` — new in v1.5
 
 `true` while this claim's Over/Under status has flipped **since the reader last
-opened F3**. It drives the light row highlight in PRD §5.5 — distinct from, and
+opened the Alert page**. It drives a light row highlight — distinct from, and
 lighter than, the standing `over_threshold` status colour.
 
 It is per-reader: one operator acknowledging a crossing must not clear a
@@ -91,7 +91,7 @@ table can still show what last happened to a claim; only `just_crossed` clears.
 
 ## GET /api/v1/alerts/notifications
 
-**New in v1.5.** The sidebar counter badge on the "Alert" nav item (US71).
+**New in v1.5.** The sidebar counter badge on the "Alert" nav item.
 
 ```bash
 curl "http://localhost:8080/api/v1/alerts/notifications" -H "Authorization: Bearer $TOKEN"
@@ -144,12 +144,12 @@ not a transition.
 
 ## POST /api/v1/alerts/notifications/acknowledge
 
-**New in v1.5.** Clears this user's badge and row highlights (US71).
+**New in v1.5.** Clears this user's badge and row highlights.
 
-US71 treats **opening F3** as the acknowledgment, so the frontend calls this on
-entering the page — *after* rendering the list it was handed, since
-acknowledging is what makes the next render unhighlighted. The PRD flags a
-per-row dismiss as the alternative; that would be a different endpoint shape,
+Opening the Alert page counts as the acknowledgment, so the frontend calls
+this on entering the page — *after* rendering the list it was handed, since
+acknowledging is what makes the next render unhighlighted. A per-row dismiss
+was considered as an alternative; that would be a different endpoint shape,
 not a different mechanism.
 
 Returns the same payload as `GET /api/v1/alerts/notifications`, now with
@@ -160,7 +160,7 @@ Returns the same payload as `GET /api/v1/alerts/notifications`, now with
 ## POST /api/v1/alerts
 
 Adds a claim to the watchlist. Called after the user confirms the bell-icon
-dialog on an F1 or F2 card (US14).
+dialog on a claim or policy card.
 
 **Body**
 
@@ -189,8 +189,8 @@ curl -X POST http://localhost:8080/api/v1/alerts \
 }
 ```
 
-`chart_visible` starts `false`: US28 requires the chart to be empty until the
-user explicitly checks a claim.
+`chart_visible` starts `false`: the chart stays empty until the user
+explicitly checks a claim.
 
 Adding a claim that is already watched is **not** an error — it returns `201`
 with the existing `added_at`, so a double-click leaves the bell filled rather
@@ -198,7 +198,7 @@ than throwing.
 
 **Errors**
 
-- `422 UNPROCESSABLE_ENTITY` — a Synthetic claim was submitted (US26):
+- `422 UNPROCESSABLE_ENTITY` — a Synthetic claim was submitted:
   `only Existing (Generic) claims can be added to the Alert page; Non-Existing (Synthetic) claims are predictions and cannot be watched`
 - `404 NOT_FOUND` — unknown claim.
 
@@ -206,10 +206,10 @@ than throwing.
 
 ## DELETE /api/v1/alerts/:claimId
 
-Removes a claim from the watchlist (US14).
+Removes a claim from the watchlist.
 
-This also clears its chart checkbox, satisfying US14's requirement that removing
-a claim unchecks it from `[C1]`/`[C2]`.
+This also clears its chart checkbox, so removing a claim unchecks it from
+`[C1]`/`[C2]`.
 
 ```bash
 curl -X DELETE "http://localhost:8080/api/v1/alerts/$CLAIM_ID" \
@@ -233,7 +233,7 @@ curl -X DELETE "http://localhost:8080/api/v1/alerts/$CLAIM_ID" \
 ## PATCH /api/v1/alerts/:claimId/chart
 
 Toggles the `[C3]` "Chart" checkbox that decides which claims `[C1]` and `[C2]`
-render (US28).
+render.
 
 **Body**
 
@@ -263,7 +263,7 @@ curl -X PATCH "http://localhost:8080/api/v1/alerts/$CLAIM_ID/chart" \
 
 ## GET /api/v1/alerts/chart
 
-The `[C1]` line chart and `[C2]` key (US27, US28).
+The `[C1]` line chart and `[C2]` key.
 
 Returns **only** claims currently checked via `chart_visible`. With none
 checked, `series` is `[]` — that is the documented default empty state, not an
@@ -274,11 +274,10 @@ error.
 | `granularity` | `week` | `day`, `week`, `month`, `year` |
 | `from`, `to` | — | RFC3339 or `YYYY-MM-DD` |
 
-`granularity` backs the Day/Week/Month/Year selector US27 added to `[C1]` in
-v1.5. It is the **same four values** accepted by
-`GET /claims/:id/score-history`, because US27 requires the selector to be the
-one shared component introduced for the claim detail page's Score History Chart
-— one control, one parameter, two charts.
+`granularity` backs the Day/Week/Month/Year selector added to `[C1]` in v1.5.
+It is the **same four values** accepted by `GET /claims/:id/score-history`: one
+shared selector component, introduced for the claim detail page's Score
+History Chart, now reused here — one control, one parameter, two charts.
 
 ```bash
 curl "http://localhost:8080/api/v1/alerts/chart?granularity=week" \
@@ -310,8 +309,8 @@ curl "http://localhost:8080/api/v1/alerts/chart?granularity=week" \
 }
 ```
 
-`y_axis_min` / `y_axis_max` are fixed at 0–100 per US27 so the axis does not
-rescale as claims are added or removed. `threshold` is included so a reference
+`y_axis_min` / `y_axis_max` are fixed at 0–100 so the axis does not rescale as
+claims are added or removed. `threshold` is included so a reference
 line can be drawn without a second request.
 
 ### Where the history comes from

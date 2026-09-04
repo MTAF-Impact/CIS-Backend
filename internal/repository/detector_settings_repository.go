@@ -12,10 +12,10 @@ import (
 	"github.com/cis/cis-backend/internal/models"
 )
 
-// F5 detector configuration and the versioned change log behind it (US62).
+// Detector configuration and the versioned change log behind it.
 //
 // These hang off SettingRepository rather than a new type because they are the
-// same feature as the alert threshold: F4's governed global configuration. The
+// same feature as the alert threshold: governed global configuration. The
 // only reason the detector parameters get a typed table of their own is that
 // two of their constraints are cross-field, which a key/value setter cannot
 // check. See models.CISDetectorSettings.
@@ -23,9 +23,9 @@ import (
 // DetectorSettings loads the single cis_detector_settings row.
 //
 // A missing row is not an error: it means the seed has not run on this database
-// yet, and PRD 10.11's defaults are the right answer either way. Returning them
-// keeps the F5 config screen and the scheduler working on a fresh deployment
-// rather than failing on a bootstrapping detail.
+// yet, and the built-in defaults are the right answer either way. Returning
+// them keeps the config screen and the scheduler working on a fresh
+// deployment rather than failing on a bootstrapping detail.
 func (r *SettingRepository) DetectorSettings(ctx context.Context) (*models.CISDetectorSettings, error) {
 	var s models.CISDetectorSettings
 	err := r.db.WithContext(ctx).Where("id = ?", models.DetectorSettingsID).First(&s).Error
@@ -44,7 +44,7 @@ func (r *SettingRepository) DetectorSettings(ctx context.Context) (*models.CISDe
 //
 // # Why the history is written field by field
 //
-// US62 requires "all changes are versioned with user and timestamp". One row
+// All changes must be versioned with user and timestamp. One row
 // per SAVE would answer "who touched the config" but not "who changed
 // theta_edge", and the second question is the one asked when a run's results
 // look wrong six weeks later. So the stored row is diffed against the incoming
@@ -180,10 +180,10 @@ func diffDetectorSettings(before, after models.CISDetectorSettings) []settingCha
 // RecordSettingChange appends one flat cis_settings change to the history.
 //
 // The detector parameters get versioned through SaveDetectorSettings; this
-// covers the key/value settings, so the alert threshold (US32) and the city
-// timezone are versioned by the same mechanism rather than by none. US62 only
-// demands it for the detector, but the threshold has been globally governed
-// since v1.3 with no record of who moved it.
+// covers the key/value settings, so the alert threshold and the city
+// timezone are versioned by the same mechanism rather than by none. The
+// threshold has always been globally governed, with no record of who moved
+// it before this history existed.
 func (r *SettingRepository) RecordSettingChange(
 	ctx context.Context, key string, from *string, to string, changedBy *uuid.UUID,
 ) error {
@@ -198,7 +198,7 @@ func (r *SettingRepository) RecordSettingChange(
 	return r.db.WithContext(ctx).Create(&entry).Error
 }
 
-// ListSettingHistory returns configuration changes, newest first (US62).
+// ListSettingHistory returns configuration changes, newest first.
 func (r *SettingRepository) ListSettingHistory(
 	ctx context.Context, keyPrefix string, limit, offset int,
 ) ([]models.CISSettingHistory, int64, error) {
